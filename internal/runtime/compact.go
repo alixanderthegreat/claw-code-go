@@ -47,6 +47,14 @@ func EstimateTokens(messages []api.Message) int {
 // ShouldCompact returns true when the session should be compacted.
 // It uses the actual API-reported input token count when available (> 0),
 // falling back to EstimateTokens.
+//
+// The threshold is a fraction of cfg.ContextWindow (the model's total context
+// length), reserved for the per-request output budget (cfg.MaxTokens) — NOT
+// a fraction of cfg.MaxTokens itself. MaxTokens is only the output cap sent
+// on each request; conflating the two means compaction is measured against
+// the wrong number entirely, which is especially dangerous for small-context
+// local models where MaxTokens can be a large fraction of (or even exceed)
+// the model's real window.
 func ShouldCompact(inputTokens int, messages []api.Message, cfg *Config) bool {
 	if !cfg.CompactionEnabled {
 		return false
@@ -54,7 +62,11 @@ func ShouldCompact(inputTokens int, messages []api.Message, cfg *Config) bool {
 	if inputTokens <= 0 {
 		inputTokens = EstimateTokens(messages)
 	}
-	threshold := int(float64(cfg.MaxTokens) * cfg.CompactionThreshold)
+	budget := cfg.ContextWindow - cfg.MaxTokens
+	if budget <= 0 {
+		budget = cfg.ContextWindow
+	}
+	threshold := int(float64(budget) * cfg.CompactionThreshold)
 	return inputTokens >= threshold
 }
 
