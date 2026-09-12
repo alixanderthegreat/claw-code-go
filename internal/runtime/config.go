@@ -32,7 +32,7 @@ type Config struct {
 	BaseURL      string
 
 	// Provider and auth fields (Phase 3).
-	// ProviderName is one of: "anthropic", "bedrock", "vertex", "foundry".
+	// ProviderName is one of: "anthropic", "bedrock", "vertex", "foundry", "openai".
 	ProviderName string
 	// AuthMethod is one of: "api_key", "oauth", "iam", "adc", "azure_identity".
 	AuthMethod string
@@ -111,6 +111,9 @@ func LoadConfig() *Config {
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		cfg.BaseURL = baseURL
 	}
+	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
+		cfg.BaseURL = baseURL
+	}
 
 	// Default session dir: ~/.claw-code/sessions
 	homeDir, err := os.UserHomeDir()
@@ -121,6 +124,8 @@ func LoadConfig() *Config {
 	}
 
 	// Detect the active provider from environment variables.
+	// Note: If OPENAI_API_KEY is set, main.go will override ProviderName via
+	// auth.ResolveCredentials() after LoadConfig returns.
 	cfg.ProviderName = detectProvider()
 
 	// Load MCP server configs.
@@ -169,6 +174,8 @@ func detectProvider() string {
 		return "vertex"
 	case os.Getenv("CLAUDE_CODE_USE_FOUNDRY") == "1":
 		return "foundry"
+	case os.Getenv("OPENAI_BASE_URL") != "":
+		return "openai"
 	default:
 		return "anthropic"
 	}

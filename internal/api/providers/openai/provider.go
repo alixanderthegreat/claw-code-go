@@ -30,9 +30,6 @@ func (p *Provider) AuthMethod() api.AuthMethod { return api.AuthMethodAPIKey }
 
 // NewClient creates an OpenAI API client from the given config.
 func (p *Provider) NewClient(cfg api.ProviderConfig) (api.APIClient, error) {
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("openai: API key required (set OPENAI_API_KEY or run /login)")
-	}
 	model := cfg.Model
 	// If the configured model is an Anthropic model name, use the default OpenAI model.
 	if model == "" || strings.HasPrefix(model, "claude") {
@@ -114,9 +111,9 @@ type oaiChunk struct {
 }
 
 type oaiChoice struct {
-	Index        int       `json:"index"`
-	Delta        oaiDelta  `json:"delta"`
-	FinishReason *string   `json:"finish_reason"`
+	Index        int      `json:"index"`
+	Delta        oaiDelta `json:"delta"`
+	FinishReason *string  `json:"finish_reason"`
 }
 
 type oaiDelta struct {
@@ -156,12 +153,22 @@ func (c *Client) StreamResponse(ctx context.Context, req api.CreateMessageReques
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
+	// Build the completions endpoint URL, handling both OpenAI and Ollama base URLs.
+	// OpenAI: https://api.openai.com → append /v1/chat/completions
+	// Ollama: http://localhost:11434/v1 → append /chat/completions
+	// kronk: http://localhost:11435/v1 → append /chat/completions
+	path := "/v1/chat/completions"
+	if strings.HasSuffix(c.BaseURL, "/v1") {
+		path = "/chat/completions"
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+		c.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai: create request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" && c.APIKey != "not-needed" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
@@ -423,12 +430,12 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 					newArgs := tc.Function.Arguments[len(pending.lastArgs):]
 					if newArgs != "" {
 						pending.lastArgs = tc.Function.Arguments
-					if !send(api.StreamEvent{
-						Type:  api.EventContentBlockDelta,
-						Index: pending.blockIndex,
+						if !send(api.StreamEvent{
+							Type:  api.EventContentBlockDelta,
+							Index: pending.blockIndex,
 							Delta: api.Delta{Type: "input_json_delta", PartialJSON: newArgs},
-					}) {
-						return
+						}) {
+							return
 						}
 					}
 				}
@@ -459,7 +466,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 
 	// Emit message_start with token counts (OpenAI only provides usage in the final chunk).
 	send(api.StreamEvent{
-		Type:      api.EventMessageStart,
+		Type:        api.EventMessageStart,
 		InputTokens: inputTokens,
 	})
 
