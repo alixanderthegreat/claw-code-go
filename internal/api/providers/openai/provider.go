@@ -307,6 +307,7 @@ type pendingToolCall struct {
 	name         string
 	startEmitted bool
 	blockIndex   int
+	lastArgs     string // track last sent args to emit only increments
 }
 
 // streamEvents reads OpenAI SSE chunks from resp and emits api.StreamEvent
@@ -324,10 +325,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		}
 	}
 
-	// Emit a placeholder message start (token counts filled in at the end).
-	if !send(api.StreamEvent{Type: api.EventMessageStart}) {
-		return
-	}
+	// EventMessageStart is emitted after the stream so it carries real token counts.
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -420,14 +418,18 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 					}
 				}
 
-				// Stream argument fragments after the start event is sent.
+				// Stream argument fragments (only the incremental portion).
 				if pending.startEmitted && tc.Function.Arguments != "" {
+					newArgs := tc.Function.Arguments[len(pending.lastArgs):]
+					if newArgs != "" {
+						pending.lastArgs = tc.Function.Arguments
 					if !send(api.StreamEvent{
 						Type:  api.EventContentBlockDelta,
 						Index: pending.blockIndex,
-						Delta: api.Delta{Type: "input_json_delta", PartialJSON: tc.Function.Arguments},
+							Delta: api.Delta{Type: "input_json_delta", PartialJSON: newArgs},
 					}) {
 						return
+						}
 					}
 				}
 			}
@@ -455,17 +457,22 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		}
 	}
 
+	// Emit message_start with token counts (OpenAI only provides usage in the final chunk).
+	send(api.StreamEvent{
+		Type:      api.EventMessageStart,
+		InputTokens: inputTokens,
+	})
+
 	// Map OpenAI finish_reason to our stop_reason vocabulary.
 	stopReason := "end_turn"
 	if finishReason == "tool_calls" {
 		stopReason = "tool_use"
 	}
 
-	_ = inputTokens // reported via MessageStart (sent with 0 above; usage is informational)
 	send(api.StreamEvent{
 		Type:       api.EventMessageDelta,
 		StopReason: stopReason,
-		Usage:      api.UsageDelta{OutputTokens: outputTokens},
+		Usage:      api.UsageDelta{InputTokens: inputTokens, OutputTokens: outputTokens},
 	})
 	send(api.StreamEvent{Type: api.EventMessageStop})
 }

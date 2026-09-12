@@ -106,6 +106,7 @@ type MessageDelta struct {
 
 // UsageDelta contains token usage info.
 type UsageDelta struct {
+	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
