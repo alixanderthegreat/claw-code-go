@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const systemPromptBase = `You are Claude Code, an AI assistant for software engineering tasks. You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks.`
+const systemPromptBase = `You are Gordi Code, an AI assistant for software engineering tasks. You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
