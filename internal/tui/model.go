@@ -342,6 +342,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey dispatches key events based on current state.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Shift+Tab cycles the permission mode globally, regardless of state
+	// (including mid-turn/busy), so it never appears to "stop working" once
+	// a round is in flight. Login/API-key text entry is the only state where
+	// the key might land in a text field instead, so it's excluded there.
+	if msg.Type == tea.KeyShiftTab && m.state != stateLoginAPIKey {
+		if m.loop.PermManager != nil {
+			m.loop.PermManager.Mode = nextPermMode(m.loop.PermManager.Mode)
+			m.cfg.PermissionMode = m.loop.PermManager.Mode.String()
+		}
+		return m, nil
+	}
+
 	switch m.state {
 	case statePicker:
 		return m.handlePickerKey(msg)
@@ -370,14 +382,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
-
-	case tea.KeyShiftTab:
-		// Cycle permission mode: default -> accept-edits -> bypass -> plan -> default.
-		if m.loop.PermManager != nil {
-			m.loop.PermManager.Mode = nextPermMode(m.loop.PermManager.Mode)
-			m.cfg.PermissionMode = m.loop.PermManager.Mode.String()
-		}
-		return m, nil
 
 	case tea.KeyEnter:
 		// Submit the message.
