@@ -124,18 +124,18 @@ func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) 
 		// Compact history if approaching the token budget (Phase 6). Checked
 		// on every iteration since a single exchange can run many tool-use
 		// round-trips, each growing the history resent on the next turn.
-	if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
-		summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
-		} else {
-			loop.Compaction.CompactionCount++
-			// Prepend a continuation marker to the retained recent messages.
-			contMsg := GetContinuationMessage(summary)
-			loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
+		if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
+			summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
+			} else {
+				loop.Compaction.CompactionCount++
+				// Prepend a continuation marker to the retained recent messages.
+				contMsg := GetContinuationMessage(summary)
+				loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
 				loop.Compaction.LastInputTokens = 0
+			}
 		}
-	}
 
 		stopReason, err := loop.runOneTurn(ctx)
 		if err != nil {
@@ -321,18 +321,18 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 		// on every iteration, not just once before the loop starts, because a
 		// single exchange can run many tool-use round-trips and each one grows
 		// the message history that gets resent on the next turn.
-	if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
-		summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
-		} else {
-			loop.Compaction.CompactionCount++
-			// Prepend a continuation marker to the retained recent messages.
-			contMsg := GetContinuationMessage(summary)
-			loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
+		if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
+			summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
+			} else {
+				loop.Compaction.CompactionCount++
+				// Prepend a continuation marker to the retained recent messages.
+				contMsg := GetContinuationMessage(summary)
+				loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
 				loop.Compaction.LastInputTokens = 0
+			}
 		}
-	}
 
 		stopReason, inTok, outTok, err := loop.runOneTurnStreaming(ctx, events)
 		if err != nil {
@@ -661,7 +661,7 @@ func (loop *ConversationLoop) ExecuteToolQuiet(name string, input map[string]any
 	}
 
 	// Validate required input fields before execution.
-	if err := validateToolInput(name, input); err != nil {
+	if err := validateToolInput(name, input, loop.allTools()); err != nil {
 		// Provide explicit schema guidance so the model can self-correct.
 		schemaHint := formatToolSchemaHint(name, loop.allTools())
 		return api.ContentBlock{
@@ -749,23 +749,16 @@ func summarizeToolInput(input map[string]any) string {
 	return ""
 }
 
-// validateToolInput checks that required fields are present in the tool input.
-func validateToolInput(name string, input map[string]any) error {
-	requiredFields := map[string][]string{
-		"bash":       {"command"},
-		"read_file":  {"path"},
-		"write_file": {"path", "content"},
-		"glob":       {"pattern"},
-		"grep":       {"pattern", "path"},
-		"file_edit":  {"file_path", "replacements"},
-		"web_fetch":  {"url"},
-		"web_search": {"query"},
-		"ask_user":   {"question"},
-		"todo_write": {"todos"},
-	}
-	if fields, ok := requiredFields[name]; ok {
+// validateToolInput checks that required fields are present in the tool input,
+// using each tool's own InputSchema.Required as the source of truth so this
+// can't drift out of sync with the tool definitions.
+func validateToolInput(name string, input map[string]any, tools []api.Tool) error {
+	for _, t := range tools {
+		if t.Name != name {
+			continue
+		}
 		var missing []string
-		for _, f := range fields {
+		for _, f := range t.InputSchema.Required {
 			v, exists := input[f]
 			if !exists || v == nil {
 				missing = append(missing, f)
@@ -776,6 +769,7 @@ func validateToolInput(name string, input map[string]any) error {
 		if len(missing) > 0 {
 			return fmt.Errorf("tool '%s' missing required input fields: %s. Provide valid values for: %v", name, strings.Join(missing, ", "), missing)
 		}
+		break
 	}
 	return nil
 }
