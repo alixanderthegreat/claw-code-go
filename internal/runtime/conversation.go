@@ -119,7 +119,11 @@ func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) 
 		},
 	})
 
-	// Compact history if approaching the token budget (Phase 6).
+	// Agentic loop: keep going until stop_reason is "end_turn"
+	for {
+		// Compact history if approaching the token budget (Phase 6). Checked
+		// on every iteration since a single exchange can run many tool-use
+		// round-trips, each growing the history resent on the next turn.
 	if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
 		summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
 		if err != nil {
@@ -129,11 +133,10 @@ func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) 
 			// Prepend a continuation marker to the retained recent messages.
 			contMsg := GetContinuationMessage(summary)
 			loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
+				loop.Compaction.LastInputTokens = 0
 		}
 	}
 
-	// Agentic loop: keep going until stop_reason is "end_turn"
-	for {
 		stopReason, err := loop.runOneTurn(ctx)
 		if err != nil {
 			return err
@@ -311,7 +314,13 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 		},
 	})
 
-	// Compact history if approaching the token budget (Phase 6).
+	var totalInput, totalOutput int
+
+	for {
+		// Compact history if approaching the token budget (Phase 6). Checked
+		// on every iteration, not just once before the loop starts, because a
+		// single exchange can run many tool-use round-trips and each one grows
+		// the message history that gets resent on the next turn.
 	if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
 		summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
 		if err != nil {
@@ -321,19 +330,24 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			// Prepend a continuation marker to the retained recent messages.
 			contMsg := GetContinuationMessage(summary)
 			loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
+				loop.Compaction.LastInputTokens = 0
 		}
 	}
 
-	var totalInput, totalOutput int
-
-	for {
 		stopReason, inTok, outTok, err := loop.runOneTurnStreaming(ctx, events)
 		if err != nil {
 			events <- TurnEvent{Type: TurnEventError, Err: err}
 			return err
 		}
-		totalInput += inTok
 		totalOutput += outTok
+		// LastInputTokens tracks the most recent turn's reported context size,
+		// not a running sum — each turn resends the whole history, so summing
+		// across turns would massively overstate how full the context window
+		// actually is and trigger compaction far too eagerly.
+		if inTok > 0 {
+			loop.Compaction.LastInputTokens = inTok
+			totalInput = inTok
+		}
 
 		if stopReason != "tool_use" {
 			break
@@ -341,7 +355,6 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	}
 
 	// Update compaction state with the latest token counts (Phase 6).
-	loop.Compaction.LastInputTokens = totalInput
 	loop.Compaction.TotalInputTokens += totalInput
 	loop.Compaction.TotalOutputTokens += totalOutput
 

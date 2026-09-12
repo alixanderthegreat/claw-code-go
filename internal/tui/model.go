@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -708,6 +709,7 @@ func (m Model) handleConfig(parts []string) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("model          = %s", m.cfg.Model),
 			fmt.Sprintf("permissionMode = %s", permMode),
 			fmt.Sprintf("maxTokens      = %d", m.cfg.MaxTokens),
+			fmt.Sprintf("contextWindow  = %d", m.cfg.ContextWindow),
 			fmt.Sprintf("theme          = %s", m.cfg.Theme),
 		}
 		m.viewBuf += statusStyle.Render(strings.Join(lines, "\n")+"\n\n")
@@ -751,6 +753,8 @@ func (m Model) configGet(key string) string {
 		return m.cfg.PermissionMode
 	case "maxTokens":
 		return fmt.Sprintf("%d", m.cfg.MaxTokens)
+	case "contextWindow":
+		return fmt.Sprintf("%d", m.cfg.ContextWindow)
 	case "theme":
 		return m.cfg.Theme
 	default:
@@ -769,6 +773,13 @@ func (m *Model) configSet(key, value string) error {
 	case "permissionMode":
 		m.cfg.PermissionMode = value
 		s.PermissionMode = value
+	case "contextWindow":
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("contextWindow must be a positive integer, got %q", value)
+		}
+		m.cfg.ContextWindow = n
+		m.loop.Config.ContextWindow = n
 	case "theme":
 		m.cfg.Theme = value
 		s.Theme = value
@@ -779,7 +790,7 @@ func (m *Model) configSet(key, value string) error {
 			SetTheme(DarkTheme)
 		}
 	default:
-		return fmt.Errorf("unknown config key %q (valid: model, permissionMode, theme)", key)
+		return fmt.Errorf("unknown config key %q (valid: model, permissionMode, contextWindow, theme)", key)
 	}
 	return config.WriteProject(s)
 }

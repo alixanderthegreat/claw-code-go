@@ -10,6 +10,12 @@ import (
 const (
 	DefaultModel     = "claude-sonnet-4-20250514"
 	DefaultMaxTokens = 8096
+	// DefaultContextWindow is a conservative fallback for the model's total
+	// context length (input + output tokens). It's deliberately generic;
+	// local/custom models should set CLAW_CONTEXT_WINDOW or context_window
+	// in the global config to their real window size (e.g. 35000), since
+	// compaction is measured against this value, not MaxTokens.
+	DefaultContextWindow = 128000
 )
 
 // MCPServerConfig describes a single MCP server connection.
@@ -62,6 +68,11 @@ type Config struct {
 
 	// Theme is the active TUI color theme ("dark" or "light").
 	Theme string
+
+	// ContextWindow is the model's total context length in tokens (Phase 6).
+	// Compaction is triggered as a fraction of this value, NOT of MaxTokens
+	// (MaxTokens is only the per-request output cap sent to the API).
+	ContextWindow int
 }
 
 // LoadConfig reads configuration from layered settings files and environment
@@ -78,6 +89,7 @@ func LoadConfig() *Config {
 		CompactionEnabled:    true,
 		CompactionThreshold:  DefaultCompactionThreshold,
 		CompactionKeepRecent: DefaultCompactionKeepRecent,
+		ContextWindow:        DefaultContextWindow,
 	}
 
 	// Apply layered settings files (user global → project → local).
