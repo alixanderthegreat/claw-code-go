@@ -18,16 +18,16 @@ const systemPromptBase = `You are Claude Code, an AI assistant for software engi
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
-	Client          api.APIClient // provider-agnostic client interface
-	Session         *Session
-	Tools           []api.Tool
-	Permissions     *Permissions
-	PermManager     *permissions.Manager  // Phase 5 permission manager (may be nil)
-	Config          *Config
-	MCPRegistry     *mcp.Registry         // MCP server registry (may be nil)
-	Compaction      CompactionState        // Phase 6 token tracking and compaction state
-	CtxAssembler    *clawctx.Assembler    // Phase 12 context assembler (may be nil)
-	Usage           *usage.Tracker        // Phase 13 per-session token usage tracker
+	Client       api.APIClient // provider-agnostic client interface
+	Session      *Session
+	Tools        []api.Tool
+	Permissions  *Permissions
+	PermManager  *permissions.Manager // Phase 5 permission manager (may be nil)
+	Config       *Config
+	MCPRegistry  *mcp.Registry      // MCP server registry (may be nil)
+	Compaction   CompactionState    // Phase 6 token tracking and compaction state
+	CtxAssembler *clawctx.Assembler // Phase 12 context assembler (may be nil)
+	Usage        *usage.Tracker     // Phase 13 per-session token usage tracker
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -172,16 +172,13 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 	}
 
 	var (
-		textBlocks    []api.ContentBlock
-		toolBlocks    []toolBlock
-		currentText   string
-		currentTool   *toolBlock
-		stopReason    string
-		blockIndex    int
-		blockTypeMap  = make(map[int]string) // index -> "text" or "tool_use"
+		textBlocks     []api.ContentBlock
+		toolOrder      []int
+		toolBlocksByIx = make(map[int]*toolBlock)
+		currentText    string
+		stopReason     string
+		blockTypeMap   = make(map[int]string) // index -> "text" or "tool_use"
 	)
-
-	_ = blockIndex // suppress unused warning
 
 	for event := range ch {
 		switch event.Type {
@@ -191,12 +188,11 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 		case api.EventContentBlockStart:
 			blockTypeMap[event.Index] = event.ContentBlock.Type
 			if event.ContentBlock.Type == "tool_use" {
-				tb := toolBlock{
+				toolBlocksByIx[event.Index] = &toolBlock{
 					id:   event.ContentBlock.ID,
 					name: event.ContentBlock.Name,
 				}
-				toolBlocks = append(toolBlocks, tb)
-				currentTool = &toolBlocks[len(toolBlocks)-1]
+				toolOrder = append(toolOrder, event.Index)
 			}
 
 		case api.EventContentBlockDelta:
@@ -206,8 +202,8 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 				fmt.Fprint(os.Stdout, event.Delta.Text)
 
 			case "input_json_delta":
-				if currentTool != nil {
-					currentTool.inputBuffer += event.Delta.PartialJSON
+				if tb, ok := toolBlocksByIx[event.Index]; ok {
+					tb.inputBuffer += event.Delta.PartialJSON
 				}
 			}
 
@@ -220,8 +216,6 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 				})
 				currentText = ""
 			}
-			// Reset currentTool pointer (but keep toolBlocks slice)
-			currentTool = nil
 
 		case api.EventMessageDelta:
 			stopReason = event.StopReason
@@ -229,6 +223,11 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 		case api.EventMessageStop:
 			// Stream complete
 		}
+	}
+
+	toolBlocks := make([]toolBlock, 0, len(toolOrder))
+	for _, idx := range toolOrder {
+		toolBlocks = append(toolBlocks, *toolBlocksByIx[idx])
 	}
 
 	// Ensure trailing newline after streaming text
@@ -384,14 +383,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	}
 
 	var (
-		textBlocks   []api.ContentBlock
-		toolBlocks   []toolBlock
-		currentText  string
-		currentTool  *toolBlock
-		stopReason   string
-		blockTypeMap = make(map[int]string)
-		inputTokens  int
-		outputTokens int
+		textBlocks     []api.ContentBlock
+		toolOrder      []int
+		toolBlocksByIx = make(map[int]*toolBlock)
+		currentText    string
+		stopReason     string
+		blockTypeMap   = make(map[int]string)
+		inputTokens    int
+		outputTokens   int
 	)
 
 	for event := range ch {
@@ -405,12 +404,11 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		case api.EventContentBlockStart:
 			blockTypeMap[event.Index] = event.ContentBlock.Type
 			if event.ContentBlock.Type == "tool_use" {
-				tb := toolBlock{
+				toolBlocksByIx[event.Index] = &toolBlock{
 					id:   event.ContentBlock.ID,
 					name: event.ContentBlock.Name,
 				}
-				toolBlocks = append(toolBlocks, tb)
-				currentTool = &toolBlocks[len(toolBlocks)-1]
+				toolOrder = append(toolOrder, event.Index)
 			}
 
 		case api.EventContentBlockDelta:
@@ -423,8 +421,8 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					return "", 0, 0, ctx.Err()
 				}
 			case "input_json_delta":
-				if currentTool != nil {
-					currentTool.inputBuffer += event.Delta.PartialJSON
+				if tb, ok := toolBlocksByIx[event.Index]; ok {
+					tb.inputBuffer += event.Delta.PartialJSON
 				}
 			}
 
@@ -433,7 +431,6 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				textBlocks = append(textBlocks, api.ContentBlock{Type: "text", Text: currentText})
 				currentText = ""
 			}
-			currentTool = nil
 
 		case api.EventMessageDelta:
 			stopReason = event.StopReason
@@ -442,6 +439,11 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		case api.EventMessageStop:
 			// stream complete
 		}
+	}
+
+	toolBlocks := make([]toolBlock, 0, len(toolOrder))
+	for _, idx := range toolOrder {
+		toolBlocks = append(toolBlocks, *toolBlocksByIx[idx])
 	}
 
 	// Build assistant message content
@@ -457,6 +459,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		} else {
 			inputMap = map[string]any{}
 		}
+
 		assistantContent = append(assistantContent, api.ContentBlock{
 			Type:  "tool_use",
 			ID:    tb.id,
@@ -475,6 +478,8 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	// Execute tools if needed
 	if stopReason == "tool_use" {
 		var toolResults []api.ContentBlock
+		var consecutiveFailures int
+		const maxConsecutiveFailures = 3
 
 		for _, tb := range toolBlocks {
 			var inputMap map[string]any
@@ -497,9 +502,9 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				// Plan mode: describe without executing.
 				if loop.PermManager.Mode == permissions.ModePlan {
 					planResult := api.ContentBlock{
-						Type:    "tool_result",
+						Type:      "tool_result",
 						ToolUseID: tb.id,
-						Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("[Plan: %s %s]", tb.name, summary)}},
+						Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("[Plan: %s %s]", tb.name, summary)}},
 					}
 					toolResults = append(toolResults, planResult)
 					continue
@@ -508,10 +513,10 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				switch decision {
 				case permissions.DecisionDeny:
 					denied := api.ContentBlock{
-						Type:    "tool_result",
+						Type:      "tool_result",
 						ToolUseID: tb.id,
-						Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
-						IsError: true,
+						Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
+						IsError:   true,
 					}
 					toolResults = append(toolResults, denied)
 					continue
@@ -539,10 +544,10 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					switch userDecision {
 					case PermDecisionDeny:
 						denied := api.ContentBlock{
-							Type:    "tool_result",
+							Type:      "tool_result",
 							ToolUseID: tb.id,
-							Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
-							IsError: true,
+							Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
+							IsError:   true,
 						}
 						toolResults = append(toolResults, denied)
 						continue
@@ -599,11 +604,28 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			if len(result.Content) > 0 {
 				resultText = result.Content[0].Text
 			}
+
 			select {
 			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText}:
 			case <-ctx.Done():
 				return "", 0, 0, ctx.Err()
 			}
+
+			// Track consecutive tool failures to prevent infinite retry loops.
+			if result.IsError && strings.Contains(resultText, "missing required input fields") {
+				consecutiveFailures++
+			} else {
+				consecutiveFailures = 0
+			}
+		}
+
+		// If the model keeps generating invalid tool inputs, stop and report.
+		if consecutiveFailures >= maxConsecutiveFailures {
+			events <- TurnEvent{
+				Type: TurnEventError,
+				Err:  fmt.Errorf("model failed %d consecutive times with invalid tool inputs. The model may not be producing valid arguments for the requested tools. Consider trying a different model or rephrasing your request.", maxConsecutiveFailures),
+			}
+			return "", 0, 0, nil
 		}
 
 		loop.Session.Messages = append(loop.Session.Messages, api.Message{
@@ -621,6 +643,17 @@ func (loop *ConversationLoop) ExecuteToolQuiet(name string, input map[string]any
 		return api.ContentBlock{
 			Type:    "tool_result",
 			Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", name)}},
+			IsError: true,
+		}
+	}
+
+	// Validate required input fields before execution.
+	if err := validateToolInput(name, input); err != nil {
+		// Provide explicit schema guidance so the model can self-correct.
+		schemaHint := formatToolSchemaHint(name, loop.allTools())
+		return api.ContentBlock{
+			Type:    "tool_result",
+			Content: []api.ContentBlock{{Type: "text", Text: err.Error() + schemaHint}},
 			IsError: true,
 		}
 	}
@@ -698,6 +731,61 @@ func summarizeToolInput(input map[string]any) string {
 				return v[:60] + "..."
 			}
 			return v
+		}
+	}
+	return ""
+}
+
+// validateToolInput checks that required fields are present in the tool input.
+func validateToolInput(name string, input map[string]any) error {
+	requiredFields := map[string][]string{
+		"bash":       {"command"},
+		"read_file":  {"path"},
+		"write_file": {"path", "content"},
+		"glob":       {"pattern"},
+		"grep":       {"pattern", "path"},
+		"file_edit":  {"file_path", "replacements"},
+		"web_fetch":  {"url"},
+		"web_search": {"query"},
+		"ask_user":   {"question"},
+		"todo_write": {"todos"},
+	}
+	if fields, ok := requiredFields[name]; ok {
+		var missing []string
+		for _, f := range fields {
+			v, exists := input[f]
+			if !exists || v == nil {
+				missing = append(missing, f)
+			} else if s, ok := v.(string); ok && s == "" {
+				missing = append(missing, f)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("tool '%s' missing required input fields: %s. Provide valid values for: %v", name, strings.Join(missing, ", "), missing)
+		}
+	}
+	return nil
+}
+
+// formatToolSchemaHint returns a schema reminder for the given tool, to help the model
+// self-correct when it produces invalid inputs.
+func formatToolSchemaHint(name string, tools []api.Tool) string {
+	for _, t := range tools {
+		if t.Name == name {
+			var fields []string
+			for k, v := range t.InputSchema.Properties {
+				req := ""
+				for _, r := range t.InputSchema.Required {
+					if r == k {
+						req = " (required)"
+						break
+					}
+				}
+				fields = append(fields, fmt.Sprintf("    \"%s\": %s%s", k, v.Type, req))
+			}
+			if len(fields) > 0 {
+				return fmt.Sprintf("\n\nExpected format for '%s':\n{\n%s\n}\n", name, strings.Join(fields, "\n"))
+			}
 		}
 	}
 	return ""
