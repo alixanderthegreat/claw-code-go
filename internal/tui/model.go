@@ -3,7 +3,9 @@ package tui
 import (
 	"claw-code-go/internal/auth"
 	"claw-code-go/internal/config"
+	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
+	"claw-code-go/internal/tools"
 	"context"
 	"fmt"
 	"os"
@@ -98,6 +100,13 @@ type (
 		reply    chan string
 	}
 )
+
+// shellDoneMsg carries the result of a "!"-prefixed shell passthrough command.
+type shellDoneMsg struct {
+	command string
+	output  string
+	err     error
+}
 
 // loginCompleteMsg is sent when a /login flow finishes (success or failure).
 type loginCompleteMsg struct {
@@ -256,6 +265,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateInput
 		m = m.refreshViewport()
 		m.viewport.GotoBottom()
+		// Update status bar with final token counts.
+		m = m.refreshViewport()
 		return m, nil
 
 	case streamWarnMsg:
@@ -268,6 +279,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.permToolName = msg.name
 		m.permToolInput = msg.input
 		m.permReplyCh = msg.reply
+		// In permission mode, the viewport fills most of the screen with the
+		// permission box at the bottom. Reserve ~8 lines for the box.
+		m.viewport.Height = m.height - 8
+		m.viewport.Width = m.width
 		m = m.refreshViewport()
 		return m, nil
 
@@ -280,6 +295,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.askUserQuestion = msg.question
 		m.askUserReplyCh = msg.reply
 		m.state = stateAskUser
+		// Reserve ~10 lines for the ask_user box
+		m.viewport.Height = m.height - 10
+		m.viewport.Width = m.width
 		m = m.refreshViewport()
 		return m, nil
 
@@ -289,6 +307,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hasStreamContent = false
 		m.state = stateInput
 		m = m.refreshViewport()
+		return m, nil
+
+	case shellDoneMsg:
+		out := strings.TrimRight(msg.output, "\n")
+		if out != "" {
+			m.viewBuf += out + "\n"
+		}
+		if msg.err != nil {
+			m.viewBuf += errorStyle.Render(fmt.Sprintf("Error: %v\n", msg.err))
+		}
+		m.viewBuf += "\n"
+		m.state = stateInput
+		m.hasStreamContent = false
+		m = m.refreshViewport()
+		m.viewport.GotoBottom()
 		return m, nil
 
 	case loginCompleteMsg:
@@ -336,6 +369,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
+
+	case tea.KeyShiftTab:
+		// Cycle permission mode: default -> accept-edits -> bypass -> plan -> default.
+		if m.loop.PermManager != nil {
+			m.loop.PermManager.Mode = nextPermMode(m.loop.PermManager.Mode)
+			m.cfg.PermissionMode = m.loop.PermManager.Mode.String()
+		}
+		return m, nil
 
 	case tea.KeyEnter:
 		// Submit the message.
@@ -397,10 +438,54 @@ func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.history.Push(text)
 	m.history.Reset()
 
+	if strings.HasPrefix(text, "!") {
+		return m.startShellCommand(strings.TrimPrefix(text, "!"))
+	}
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashCommand(text)
 	}
 	return m.startMessage(text)
+}
+
+// startShellCommand runs a "!"-prefixed command directly against the shell,
+// bypassing the model and the permission system entirely (the user typed it
+// themselves). Output is appended to the transcript but never sent to the
+// model as conversation history.
+func (m Model) startShellCommand(command string) (tea.Model, tea.Cmd) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return m, nil
+	}
+	m.viewBuf += userLabelStyle.Render("!") + " " + command + "\n\n"
+	m.state = stateBusy
+	m.hasStreamContent = false
+	m = m.refreshViewport()
+	return m, tea.Batch(m.spinner.Tick, runShellCommand(command))
+}
+
+// runShellCommand executes command via the bash tool and returns a shellDoneMsg.
+// Bubble Tea runs the returned func in its own goroutine, so this does not
+// block the UI.
+func runShellCommand(command string) tea.Cmd {
+	return func() tea.Msg {
+		output, err := tools.ExecuteBash(map[string]any{"command": command})
+		return shellDoneMsg{command: command, output: output, err: err}
+	}
+}
+
+// nextPermMode cycles through permission modes in a fixed order, used by the
+// Shift+Tab "auto-mode" toggle.
+func nextPermMode(mode permissions.PermissionMode) permissions.PermissionMode {
+	switch mode {
+	case permissions.ModeDefault:
+		return permissions.ModeAcceptEdits
+	case permissions.ModeAcceptEdits:
+		return permissions.ModeBypassPermissions
+	case permissions.ModeBypassPermissions:
+		return permissions.ModePlan
+	default:
+		return permissions.ModeDefault
+	}
 }
 
 // handleSlashCommand processes built-in slash commands.
@@ -953,6 +1038,7 @@ func (m Model) handleAskUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.askUserReplyCh = nil
 		m.askUserQuestion = ""
 		m.state = stateBusy
+		m.viewport.Height = m.viewportHeight()
 		m = m.refreshViewport()
 		return m, tea.Batch(
 			func() tea.Msg { ch <- ""; return nil },
@@ -964,6 +1050,7 @@ func (m Model) handleAskUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.askUserReplyCh = nil
 		m.askUserQuestion = ""
 		m.state = stateBusy
+		m.viewport.Height = m.viewportHeight()
 		m = m.refreshViewport()
 		return m, tea.Batch(
 			func() tea.Msg { ch <- answer; return nil },
@@ -990,8 +1077,7 @@ func (m Model) viewAskUser() string {
 		"",
 		statusStyle.Render("  Enter to answer  •  Esc to skip  •  Ctrl+C to quit"),
 	)
-	box := helpBoxStyle.Width(min(72, m.width-4)).Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return helpBoxStyle.Width(min(72, m.width-4)).Render(content)
 }
 
 // startMessage begins a streaming conversation turn.
@@ -1088,6 +1174,7 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.permToolName = ""
 	m.permToolInput = ""
 	m.state = stateBusy
+	m.viewport.Height = m.viewportHeight()
 	m = m.refreshViewport()
 
 	return m, tea.Batch(
@@ -1113,9 +1200,9 @@ func (m Model) View() string {
 	case stateHelp:
 		return m.viewHelp()
 	case statePermission:
-		return m.viewPermission()
+		return m.viewPermissionOverlay()
 	case stateAskUser:
-		return m.viewAskUser()
+		return lipgloss.JoinVertical(lipgloss.Top, m.viewport.View(), m.viewAskUser())
 	case stateLoginProvider:
 		return m.viewLoginProvider()
 	case stateLoginMethod:
@@ -1128,7 +1215,7 @@ func (m Model) View() string {
 
 	header := m.renderHeader()
 	divider := dividerStyle.Render(strings.Repeat("─", m.width))
-	hint := statusStyle.Render("Enter=send  Ctrl+J=newline  ↑↓=history  PgUp/PgDn=scroll")
+	hint := statusStyle.Render("Enter=send  Ctrl+J=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
@@ -1145,7 +1232,11 @@ func (m Model) View() string {
 func (m Model) renderHeader() string {
 	title := headerStyle.Render("Claw Code v" + appVersion)
 	tag := modelTagStyle.Render(fmt.Sprintf("  [%s] %s", m.cfg.ProviderName, m.cfg.Model))
-	return title + tag
+	mode := ""
+	if m.loop.PermManager != nil && m.loop.PermManager.Mode != permissions.ModeDefault {
+		mode = modelTagStyle.Render("  ⚡ " + m.loop.PermManager.Mode.String())
+	}
+	return title + tag + mode
 }
 
 func (m Model) renderStatusBar() string {
@@ -1236,6 +1327,8 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("Ctrl+J")+"         Insert newline (multi-line input)",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Navigate input history (single-line mode)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
+		"  "+userLabelStyle.Render("Shift+Tab")+"      Cycle permission mode (default → accept-edits → bypass → plan)",
+		"  "+userLabelStyle.Render("!")+"<command>      Run a shell command directly, skipping the model",
 		"  "+userLabelStyle.Render("Ctrl+C")+"         Exit",
 		"",
 		statusStyle.Render("Esc / Enter / q to close this panel"),
@@ -1259,8 +1352,11 @@ func (m Model) viewPermission() string {
 		"",
 		"  "+hint,
 	)
-	box := helpBoxStyle.Width(min(72, m.width-4)).Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return helpBoxStyle.Width(min(72, m.width-4)).Render(content)
+}
+
+func (m Model) viewPermissionOverlay() string {
+	return lipgloss.JoinVertical(lipgloss.Top, m.viewport.View(), m.viewPermission())
 }
 
 // viewLoginProvider renders the provider selection screen.
