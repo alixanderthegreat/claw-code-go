@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 const (
@@ -75,12 +76,14 @@ type Config struct {
 	ContextWindow int
 }
 
-// LoadConfig reads configuration from layered settings files and environment
-// variables and applies defaults. Load order (later overrides earlier):
+// LoadConfig reads configuration from layered settings files, the global
+// config (~/.config/claw-code-go/config.json), and environment variables.
+// Load order (later overrides earlier):
 //  1. Defaults
-//  2. Layered settings files (user global → project → local)
+//  2. Global config (~/.config/claw-code-go/config.json)
 //  3. Environment variables
-//  4. CLI flags (applied by the caller after this function returns)
+//  4. Layered settings files (user global → project → local)
+//  5. CLI flags (applied by the caller after this function returns)
 func LoadConfig() *Config {
 	cfg := &Config{
 		Model:                DefaultModel,
@@ -92,28 +95,26 @@ func LoadConfig() *Config {
 		ContextWindow:        DefaultContextWindow,
 	}
 
-	// Apply layered settings files (user global → project → local).
-	s := config.Load()
-	if s.Model != "" {
-		cfg.Model = s.Model
-	}
-	if s.MaxTokens != 0 {
-		cfg.MaxTokens = s.MaxTokens
-	}
-	if s.PermissionMode != "" {
-		cfg.PermissionMode = s.PermissionMode
-	}
-	if len(s.AllowedTools) > 0 {
-		cfg.AllowedTools = s.AllowedTools
-	}
-	if len(s.BlockedTools) > 0 {
-		cfg.BlockedTools = s.BlockedTools
-	}
-	if s.Theme != "" {
-		cfg.Theme = s.Theme
+	// Apply global config as the base (~/.config/claw-code-go/config.json).
+	if gc, err := config.LoadGlobal(); err == nil {
+		if gc.Model != "" {
+			cfg.Model = gc.Model
+		}
+		if gc.APIKey != "" {
+			cfg.APIKey = gc.APIKey
+		}
+		if gc.BaseURL != "" {
+			cfg.BaseURL = gc.BaseURL
+		}
+		if gc.MaxTokens != 0 {
+			cfg.MaxTokens = gc.MaxTokens
+		}
+		if gc.ContextWindow != 0 {
+			cfg.ContextWindow = gc.ContextWindow
+		}
 	}
 
-	// Environment variables override settings files.
+	// Environment variables override global config.
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 		cfg.APIKey = key
 	}
@@ -126,6 +127,11 @@ func LoadConfig() *Config {
 	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
 		cfg.BaseURL = baseURL
 	}
+	if ctxWindow := os.Getenv("CLAW_CONTEXT_WINDOW"); ctxWindow != "" {
+		if n, err := strconv.Atoi(ctxWindow); err == nil && n > 0 {
+			cfg.ContextWindow = n
+		}
+	}
 
 	// Default session dir: ~/.claw-code/sessions
 	homeDir, err := os.UserHomeDir()
@@ -135,10 +141,8 @@ func LoadConfig() *Config {
 		cfg.SessionDir = ".claw-code-sessions"
 	}
 
-	// Detect the active provider from environment variables.
-	// Note: If OPENAI_API_KEY is set, main.go will override ProviderName via
-	// auth.ResolveCredentials() after LoadConfig returns.
-	cfg.ProviderName = detectProvider()
+	// Detect the active provider from env vars and global config.
+	cfg.ProviderName = detectProvider(cfg.BaseURL)
 
 	// Load MCP server configs.
 	cfg.MCPServers = loadMCPServers(homeDir)
@@ -177,8 +181,10 @@ func loadMCPServers(homeDir string) []MCPServerConfig {
 	return settings.MCPServers
 }
 
-// detectProvider reads env vars to determine which provider to use.
-func detectProvider() string {
+// detectProvider reads env vars and the resolved base URL to determine which
+// provider to use. baseURL may come from OPENAI_BASE_URL or the global config
+// file, so it's checked directly rather than re-reading the env var.
+func detectProvider(baseURL string) string {
 	switch {
 	case os.Getenv("CLAUDE_CODE_USE_BEDROCK") == "1":
 		return "bedrock"
@@ -186,7 +192,7 @@ func detectProvider() string {
 		return "vertex"
 	case os.Getenv("CLAUDE_CODE_USE_FOUNDRY") == "1":
 		return "foundry"
-	case os.Getenv("OPENAI_BASE_URL") != "":
+	case baseURL != "":
 		return "openai"
 	default:
 		return "anthropic"

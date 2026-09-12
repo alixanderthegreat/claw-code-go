@@ -86,6 +86,16 @@ func main() {
 		} else {
 			cfg.APIKey = token
 		}
+	} else if cfg.APIKey != "" && cfg.BaseURL != "" {
+		// ResolveCredentials only ever looks at ANTHROPIC_API_KEY/OPENAI_API_KEY env vars and
+		// the stored /login credential store - it has no idea a custom OpenAI-compatible
+		// endpoint with its own key came from the global config file
+		// (~/.config/claw-code-go/config.json) or a CLI flag. That's a real, sufficient
+		// credential on its own (cfg.ProviderName is already "openai" here, via
+		// detectProvider(cfg.BaseURL) in LoadConfig) - without this branch, a configured local
+		// gateway/kronk endpoint could never be used without ALSO exporting OPENAI_API_KEY by
+		// hand on every single invocation.
+		cfg.AuthMethod = "api_key"
 	} else {
 		// No credentials found — start with NoAuthClient so the TUI still opens.
 		// The user can run /login inside the TUI.
@@ -143,7 +153,11 @@ func main() {
 
 	// Single prompt (non-interactive) mode — no TUI, plain stdout streaming.
 	if *promptFlag != "" {
-		if credErr != nil {
+		// Check cfg directly, not credErr: credErr only reflects ResolveCredentials' own
+		// sources (env vars, stored /login credentials) and knows nothing about a custom
+		// endpoint's key coming from the global config file instead (see the credErr handling
+		// above).
+		if cfg.APIKey == "" && cfg.OAuthToken == "" {
 			fmt.Fprintln(os.Stderr, "Error: cannot use --prompt without valid credentials.")
 			fmt.Fprintln(os.Stderr, "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run the TUI and use /login.")
 			os.Exit(1)
