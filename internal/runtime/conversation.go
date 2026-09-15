@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -28,6 +29,12 @@ type ConversationLoop struct {
 	Compaction   CompactionState    // Phase 6 token tracking and compaction state
 	CtxAssembler *clawctx.Assembler // Phase 12 context assembler (may be nil)
 	Usage        *usage.Tracker     // Phase 13 per-session token usage tracker
+
+	// ReadFiles tracks which files have been read via read_file this
+	// session (keyed by absolute path), gating write_file/file_edit so a
+	// modification is always grounded in real, current content rather than
+	// a guess — mirrors Claude Code's own read-before-edit rule.
+	ReadFiles map[string]bool
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -53,7 +60,42 @@ func NewConversationLoop(cfg *Config, client api.APIClient) *ConversationLoop {
 		Config:       cfg,
 		CtxAssembler: clawctx.NewAssembler(workDir),
 		Usage:        usage.NewTracker(cfg.Model),
+		ReadFiles:    make(map[string]bool),
 	}
+}
+
+// markRead records that path's current on-disk content is now known,
+// satisfying the read-before-write gate for subsequent write_file/file_edit
+// calls on the same file.
+func (loop *ConversationLoop) markRead(path string) {
+	if loop.ReadFiles == nil {
+		loop.ReadFiles = make(map[string]bool)
+	}
+	loop.ReadFiles[normalizeReadPath(path)] = true
+}
+
+// requireReadBeforeWrite refuses to modify a file the model hasn't actually
+// seen this session. A file that doesn't exist yet is exempt — there's
+// nothing to have read, and creating it is how the model would first see it.
+func (loop *ConversationLoop) requireReadBeforeWrite(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	if !loop.ReadFiles[normalizeReadPath(path)] {
+		return fmt.Errorf("refusing to modify %s: read it first with read_file so the change is grounded in its real, current content", path)
+	}
+	return nil
+}
+
+// normalizeReadPath resolves path to an absolute, cleaned form so the same
+// file is recognized as "read" regardless of how it's referenced (relative
+// vs. absolute, redundant "./", etc).
+func normalizeReadPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
 }
 
 // SystemPrompt returns the rendered system prompt for diagnostic use.
@@ -706,14 +748,31 @@ func (loop *ConversationLoop) ExecuteToolQuiet(name string, input map[string]any
 		result, err = tools.ExecuteBash(input)
 	case "read_file":
 		result, err = tools.ExecuteReadFile(input)
+		if err == nil {
+			if path, ok := input["path"].(string); ok {
+				loop.markRead(path)
+			}
+		}
 	case "write_file":
-		result, err = tools.ExecuteWriteFile(input)
+		path, _ := input["path"].(string)
+		if err = loop.requireReadBeforeWrite(path); err == nil {
+			result, err = tools.ExecuteWriteFile(input)
+			if err == nil {
+				loop.markRead(path)
+			}
+		}
 	case "glob":
 		result, err = tools.ExecuteGlob(input)
 	case "grep":
 		result, err = tools.ExecuteGrep(input)
 	case "file_edit":
-		result, err = tools.ExecuteFileEdit(input)
+		path, _ := input["file_path"].(string)
+		if err = loop.requireReadBeforeWrite(path); err == nil {
+			result, err = tools.ExecuteFileEdit(input)
+			if err == nil {
+				loop.markRead(path)
+			}
+		}
 	case "web_fetch":
 		result, err = tools.ExecuteWebFetch(input)
 	case "web_search":
@@ -892,14 +951,31 @@ func (loop *ConversationLoop) ExecuteTool(name string, input map[string]any) api
 		result, err = tools.ExecuteBash(input)
 	case "read_file":
 		result, err = tools.ExecuteReadFile(input)
+		if err == nil {
+			if path, ok := input["path"].(string); ok {
+				loop.markRead(path)
+			}
+		}
 	case "write_file":
-		result, err = tools.ExecuteWriteFile(input)
+		path, _ := input["path"].(string)
+		if err = loop.requireReadBeforeWrite(path); err == nil {
+			result, err = tools.ExecuteWriteFile(input)
+			if err == nil {
+				loop.markRead(path)
+			}
+		}
 	case "glob":
 		result, err = tools.ExecuteGlob(input)
 	case "grep":
 		result, err = tools.ExecuteGrep(input)
 	case "file_edit":
-		result, err = tools.ExecuteFileEdit(input)
+		path, _ := input["file_path"].(string)
+		if err = loop.requireReadBeforeWrite(path); err == nil {
+			result, err = tools.ExecuteFileEdit(input)
+			if err == nil {
+				loop.markRead(path)
+			}
+		}
 	case "web_fetch":
 		result, err = tools.ExecuteWebFetch(input)
 	case "web_search":
