@@ -1523,6 +1523,13 @@ func (m Model) refreshViewport() Model {
 	if m.state == stateBusy && !m.hasStreamContent {
 		content += m.spinner.View() + statusStyle.Render(" Thinking…\n")
 	}
+	// viewport.Model does not word-wrap on its own (it only splits on "\n"),
+	// so long streamed lines — reasoning text especially, which arrives as
+	// unbroken paragraphs — would run past the terminal edge. Wrap ANSI-aware
+	// so existing style codes (from thinkingStyle etc.) survive the wrap.
+	if m.viewport.Width > 0 {
+		content = lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+	}
 	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
 	return m
