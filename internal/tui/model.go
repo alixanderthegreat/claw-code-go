@@ -184,6 +184,15 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(currentTheme.Primary)
 
+	viewBuf := RenderLogo(appVersion)
+	// A --session-loaded history only restores loop.Session.Messages (what the model sees on the
+	// next turn) - without this, the TUI shows the startup logo with no sign the past conversation
+	// is actually there at all, even though it's fully loaded underneath.
+	if loop.Session != nil && len(loop.Session.Messages) > 0 {
+		viewBuf += "\n" + statusStyle.Render(fmt.Sprintf("── Resumed session %s (%d messages) ──", loop.Session.ID, len(loop.Session.Messages))) + "\n\n"
+		viewBuf += renderHistory(loop.Session.Messages)
+	}
+
 	return Model{
 		state:    stateInput,
 		textarea: ta,
@@ -191,7 +200,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		history:  newInputHistory(),
 		loop:     loop,
 		cfg:      cfg,
-		viewBuf:  RenderLogo(appVersion),
+		viewBuf:  viewBuf,
 	}
 }
 
@@ -241,7 +250,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 		}
-		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, truncate(msg.input, 60))) + "\n"
+		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, msg.input)) + "\n"
 		m.streamBuf += line
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
@@ -249,7 +258,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamToolDoneMsg:
 		suffix := ""
 		if msg.result != "" {
-			suffix = " → " + truncate(msg.result, 40)
+			suffix = " → " + truncate(msg.result, 120)
 		}
 		line := toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
 		m.streamBuf += line
