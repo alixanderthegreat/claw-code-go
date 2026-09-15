@@ -241,7 +241,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 		}
-		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s\n", msg.name, truncate(msg.input, 60)))
+		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, truncate(msg.input, 60))) + "\n"
 		m.streamBuf += line
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
@@ -251,7 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result != "" {
 			suffix = " → " + truncate(msg.result, 40)
 		}
-		line := toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s\n", msg.name, suffix))
+		line := toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
 		m.streamBuf += line
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
@@ -264,11 +264,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamDoneMsg:
 		// Commit streamBuf to viewBuf with token annotation.
 		if m.streamBuf != "" || m.hasStreamContent {
-			tokLine := statusStyle.Render(fmt.Sprintf(
-				"\n\nTokens: %s in / %s out\n\n",
+			tokLine := "\n\n" + statusStyle.Render(fmt.Sprintf(
+				"Tokens: %s in / %s out",
 				formatNum(m.inputTokens),
 				formatNum(m.outputTokens),
-			))
+			)) + "\n\n"
 			m.viewBuf += m.streamBuf + tokLine
 			m.streamBuf = ""
 		}
@@ -281,7 +281,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamWarnMsg:
-		m.viewBuf += warnStyle.Render(fmt.Sprintf("Warning: %s\n\n", msg.text))
+		m.viewBuf += renderBlock(warnStyle, fmt.Sprintf("Warning: %s", msg.text))
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
@@ -313,7 +313,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamErrMsg:
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("Error: %v\n\n", msg.err))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error: %v", msg.err))
 		m.streamBuf = ""
 		m.hasStreamContent = false
 		m.state = stateInput
@@ -533,7 +533,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 
 	case "/clear":
 		m.loop.ClearSession()
-		m.viewBuf = statusStyle.Render("Session cleared.\n\n")
+		m.viewBuf = renderBlock(statusStyle, "Session cleared.")
 		m.streamBuf = ""
 		m.inputTokens = 0
 		m.outputTokens = 0
@@ -543,11 +543,11 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 	case "/session-list":
 		metas, err := m.loop.ListSessionsWithMeta()
 		if err != nil {
-			m.viewBuf += errorStyle.Render(fmt.Sprintf("Error listing sessions: %v\n\n", err))
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error listing sessions: %v", err))
 		} else if len(metas) == 0 {
-			m.viewBuf += statusStyle.Render("No saved sessions.\n\n")
+			m.viewBuf += renderBlock(statusStyle, "No saved sessions.")
 		} else {
-			m.viewBuf += statusStyle.Render(formatSessionList(metas) + "\n\n")
+			m.viewBuf += renderBlock(statusStyle, formatSessionList(metas))
 		}
 		m = m.refreshViewport()
 		return m, nil
@@ -560,10 +560,10 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		switch theme {
 		case "light":
 			SetTheme(LightTheme)
-			m.viewBuf += statusStyle.Render("Theme: light.\n\n")
+			m.viewBuf += renderBlock(statusStyle, "Theme: light.")
 		default:
 			SetTheme(DarkTheme)
-			m.viewBuf += statusStyle.Render("Theme: dark.\n\n")
+			m.viewBuf += renderBlock(statusStyle, "Theme: dark.")
 		}
 		m = m.refreshViewport()
 		return m, nil
@@ -574,7 +574,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 			sub = parts[1]
 		}
 		msg := m.handleAuthSubcommand(sub)
-		m.viewBuf += statusStyle.Render(msg + "\n\n")
+		m.viewBuf += renderBlock(statusStyle, msg)
 		m = m.refreshViewport()
 		return m, nil
 
@@ -597,7 +597,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	default:
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("Unknown command: %s  (type /help for commands)\n\n", parts[0]))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Unknown command: %s  (type /help for commands)", parts[0]))
 		m = m.refreshViewport()
 		return m, nil
 	}
@@ -613,11 +613,11 @@ func (m Model) handleSessionCommand(parts []string) (tea.Model, tea.Cmd) {
 	case "list":
 		metas, err := m.loop.ListSessionsWithMeta()
 		if err != nil {
-			m.viewBuf += errorStyle.Render(fmt.Sprintf("Error listing sessions: %v\n\n", err))
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error listing sessions: %v", err))
 		} else if len(metas) == 0 {
-			m.viewBuf += statusStyle.Render("No saved sessions.\n\n")
+			m.viewBuf += renderBlock(statusStyle, "No saved sessions.")
 		} else {
-			m.viewBuf += statusStyle.Render(formatSessionList(metas) + "\n\n")
+			m.viewBuf += renderBlock(statusStyle, formatSessionList(metas))
 		}
 	case "save":
 		name := ""
@@ -628,23 +628,23 @@ func (m Model) handleSessionCommand(parts []string) (tea.Model, tea.Cmd) {
 			m.loop.Session.ID = name
 		}
 		if err := m.loop.SaveCurrentSession(); err != nil {
-			m.viewBuf += errorStyle.Render(fmt.Sprintf("Error saving session: %v\n\n", err))
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error saving session: %v", err))
 		} else {
-			m.viewBuf += statusStyle.Render(fmt.Sprintf("Session saved: %s\n\n", m.loop.Session.ID))
+			m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Session saved: %s", m.loop.Session.ID))
 		}
 	case "load":
 		if len(parts) < 3 {
-			m.viewBuf += errorStyle.Render("Usage: /session load <name>\n\n")
+			m.viewBuf += renderBlock(errorStyle, "Usage: /session load <name>")
 		} else {
 			id := parts[2]
 			if err := m.loop.LoadNamedSession(id); err != nil {
-				m.viewBuf += errorStyle.Render(fmt.Sprintf("Error loading session %q: %v\n\n", id, err))
+				m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error loading session %q: %v", id, err))
 			} else {
-				m.viewBuf += statusStyle.Render(fmt.Sprintf("Session loaded: %s (%d messages)\n\n", id, m.loop.MessageCount()))
+				m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Session loaded: %s (%d messages)", id, m.loop.MessageCount()))
 			}
 		}
 	default:
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("Unknown /session subcommand %q. Usage: /session list|save|load <name>\n\n", sub))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Unknown /session subcommand %q. Usage: /session list|save|load <name>", sub))
 	}
 	m = m.refreshViewport()
 	return m, nil
@@ -667,7 +667,7 @@ func (m Model) handleStatus() (tea.Model, tea.Cmd) {
 		fmt.Sprintf("Messages       : %d", m.loop.MessageCount()),
 		fmt.Sprintf("Tokens in/out  : %s / %s", formatNum(m.inputTokens), formatNum(m.outputTokens)),
 	}
-	m.viewBuf += statusStyle.Render(strings.Join(lines, "\n") + "\n\n")
+	m.viewBuf += renderBlock(statusStyle, strings.Join(lines, "\n"))
 	m = m.refreshViewport()
 	return m, nil
 }
@@ -677,11 +677,11 @@ func (m Model) handleInit() (tea.Model, tea.Cmd) {
 	err := config.InitProject(m.cfg.Model)
 	switch {
 	case err == nil:
-		m.viewBuf += statusStyle.Render("Created .claude/settings.json with defaults.\n\n")
+		m.viewBuf += renderBlock(statusStyle, "Created .claude/settings.json with defaults.")
 	case os.IsExist(err):
-		m.viewBuf += statusStyle.Render(".claude/settings.json already exists — no changes made.\n\n")
+		m.viewBuf += renderBlock(statusStyle, ".claude/settings.json already exists — no changes made.")
 	default:
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("init: %v\n\n", err))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("init: %v", err))
 	}
 	m = m.refreshViewport()
 	return m, nil
@@ -706,7 +706,7 @@ func (m Model) handleCost() (tea.Model, tea.Cmd) {
 		}
 		report = strings.Join(lines, "\n")
 	}
-	m.viewBuf += statusStyle.Render(report + "\n\n")
+	m.viewBuf += renderBlock(statusStyle, report)
 	m = m.refreshViewport()
 	return m, nil
 }
@@ -726,7 +726,7 @@ func (m Model) handleConfig(parts []string) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("contextWindow  = %d", m.cfg.ContextWindow),
 			fmt.Sprintf("theme          = %s", m.cfg.Theme),
 		}
-		m.viewBuf += statusStyle.Render(strings.Join(lines, "\n") + "\n\n")
+		m.viewBuf += renderBlock(statusStyle, strings.Join(lines, "\n"))
 		m = m.refreshViewport()
 		return m, nil
 	}
@@ -736,9 +736,9 @@ func (m Model) handleConfig(parts []string) (tea.Model, tea.Cmd) {
 		// Show single key.
 		val := m.configGet(key)
 		if val == "" {
-			m.viewBuf += errorStyle.Render(fmt.Sprintf("Unknown config key: %s\n\n", key))
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Unknown config key: %s", key))
 		} else {
-			m.viewBuf += statusStyle.Render(fmt.Sprintf("%s = %s\n\n", key, val))
+			m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("%s = %s", key, val))
 		}
 		m = m.refreshViewport()
 		return m, nil
@@ -747,9 +747,9 @@ func (m Model) handleConfig(parts []string) (tea.Model, tea.Cmd) {
 	// Set value.
 	value := strings.Join(parts[2:], " ")
 	if err := m.configSet(key, value); err != nil {
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("config set: %v\n\n", err))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("config set: %v", err))
 	} else {
-		m.viewBuf += statusStyle.Render(fmt.Sprintf("Set %s = %s\n\n", key, value))
+		m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Set %s = %s", key, value))
 	}
 	m = m.refreshViewport()
 	return m, nil
@@ -940,7 +940,7 @@ func (m Model) handleLoginAPIKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		apiKey := strings.TrimSpace(m.loginKeyInput.Value())
 		if apiKey == "" {
-			m.viewBuf += errorStyle.Render("API key cannot be empty.\n\n")
+			m.viewBuf += renderBlock(errorStyle, "API key cannot be empty.")
 			m.state = stateInput
 			m = m.refreshViewport()
 			return m, nil
@@ -965,17 +965,17 @@ func (m Model) handleLoginAPIKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) startOAuthLogin() (Model, tea.Cmd) {
 	session, err := auth.PrepareOAuthFlow()
 	if err != nil {
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("OAuth setup failed: %v\n\n", err))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("OAuth setup failed: %v", err))
 		m.state = stateInput
 		m = m.refreshViewport()
 		return m, nil
 	}
 
 	m.state = stateLoginOAuth
-	m.viewBuf += statusStyle.Render(fmt.Sprintf(
+	m.viewBuf += renderBlock(statusStyle, fmt.Sprintf(
 		"Opening browser for Anthropic OAuth login...\n"+
 			"If your browser doesn't open, visit:\n  %s\n\n"+
-			"Waiting for callback… (5-minute timeout)\n\n",
+			"Waiting for callback… (5-minute timeout)",
 		session.AuthURL,
 	))
 	m = m.refreshViewport()
@@ -1012,7 +1012,7 @@ func (m Model) handleLoginComplete(result loginCompleteMsg) (tea.Model, tea.Cmd)
 	m.state = stateInput
 
 	if result.err != nil {
-		m.viewBuf += errorStyle.Render(fmt.Sprintf("Login failed: %v\n\n", result.err))
+		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Login failed: %v", result.err))
 		m = m.refreshViewport()
 		return m, nil
 	}
@@ -1139,7 +1139,7 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		chosen := models[m.pickerCursor]
 		m.cfg.Model = chosen.id
 		m.loop.Config.Model = chosen.id
-		m.viewBuf += statusStyle.Render(fmt.Sprintf("Model changed to %s\n\n", chosen.id))
+		m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Model changed to %s", chosen.id))
 		m.state = stateInput
 		m = m.refreshViewport()
 		return m, nil

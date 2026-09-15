@@ -28,6 +28,20 @@ var (
 // init seeds styles from the default theme before the first render.
 func init() { rebuildStyles(currentTheme) }
 
+// renderBlock styles text and appends a plain, unstyled blank-line separator.
+//
+// Embedding that separator inside the styled Render() call instead (e.g.
+// style.Render(text+"\n\n")) is unsafe: lipgloss treats a multi-line Render()
+// argument as one block, padding every line to the width of the widest line
+// in that same call and dropping the final trailing newline. Whatever gets
+// concatenated next then silently glues onto the end of a padded blank line
+// instead of starting a fresh one — visible as stray leading whitespace on
+// the next real line. Always build separator-terminated styled text through
+// this helper instead of embedding "\n" inside a Render() argument.
+func renderBlock(style lipgloss.Style, text string) string {
+	return style.Render(text) + "\n\n"
+}
+
 // rebuildStyles recreates all styles from the given theme tokens.
 func rebuildStyles(t Theme) {
 	headerStyle = lipgloss.NewStyle().
