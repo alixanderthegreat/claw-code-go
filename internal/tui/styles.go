@@ -12,6 +12,8 @@ var (
 	toolRunningStyle     lipgloss.Style
 	toolDoneStyle        lipgloss.Style
 	toolFailedStyle      lipgloss.Style
+	thinkingHeaderStyle  lipgloss.Style
+	thinkingStyle        lipgloss.Style
 	statusStyle          lipgloss.Style
 	warnStyle            lipgloss.Style
 	errorStyle           lipgloss.Style
@@ -53,6 +55,14 @@ func rebuildStyles(t Theme) {
 	toolFailedStyle = lipgloss.NewStyle().
 		Foreground(t.ToolFailed).
 		Bold(true)
+
+	thinkingHeaderStyle = lipgloss.NewStyle().
+		Foreground(t.Muted).
+		Bold(true)
+
+	thinkingStyle = lipgloss.NewStyle().
+		Foreground(t.Muted).
+		Italic(true)
 
 	statusStyle = lipgloss.NewStyle().
 		Foreground(t.Muted)

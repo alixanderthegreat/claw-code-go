@@ -204,6 +204,9 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 				currentText += event.Delta.Text
 				fmt.Fprint(os.Stdout, event.Delta.Text)
 
+			case "thinking_delta":
+				fmt.Fprint(os.Stdout, event.Delta.Text)
+
 			case "input_json_delta":
 				if tb, ok := toolBlocksByIx[event.Index]; ok {
 					tb.inputBuffer += event.Delta.PartialJSON
@@ -218,6 +221,10 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 					Text: currentText,
 				})
 				currentText = ""
+			}
+			if ok && bType == "thinking" {
+				fmt.Fprintln(os.Stdout)
+				fmt.Fprintln(os.Stdout)
 			}
 
 		case api.EventMessageDelta:
@@ -433,6 +440,16 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				case <-ctx.Done():
 					return "", 0, 0, ctx.Err()
 				}
+			case "thinking_delta":
+				// Reasoning is shown live but not accumulated into the
+				// assistant message: it's not part of the OpenAI-compatible
+				// message contract and local reasoning backends don't expect
+				// it echoed back on the next turn.
+				select {
+				case events <- TurnEvent{Type: TurnEventThinkingDelta, Text: event.Delta.Text}:
+				case <-ctx.Done():
+					return "", 0, 0, ctx.Err()
+				}
 			case "input_json_delta":
 				if tb, ok := toolBlocksByIx[event.Index]; ok {
 					tb.inputBuffer += event.Delta.PartialJSON
@@ -440,9 +457,19 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			}
 
 		case api.EventContentBlockStop:
-			if bType, ok := blockTypeMap[event.Index]; ok && bType == "text" && currentText != "" {
-				textBlocks = append(textBlocks, api.ContentBlock{Type: "text", Text: currentText})
-				currentText = ""
+			switch blockTypeMap[event.Index] {
+			case "text":
+				if currentText != "" {
+					textBlocks = append(textBlocks, api.ContentBlock{Type: "text", Text: currentText})
+					currentText = ""
+				}
+			case "thinking":
+				// Blank-line separator before the real answer starts streaming.
+				select {
+				case events <- TurnEvent{Type: TurnEventThinkingDelta, Text: "\n\n"}:
+				case <-ctx.Done():
+					return "", 0, 0, ctx.Err()
+				}
 			}
 
 		case api.EventMessageDelta:

@@ -119,6 +119,10 @@ type oaiChoice struct {
 type oaiDelta struct {
 	Content   *string            `json:"content"`
 	ToolCalls []oaiToolCallDelta `json:"tool_calls"`
+	// ReasoningContent carries a local reasoning model's chain-of-thought
+	// (e.g. kronk/llama.cpp serving a Qwen3-thinking checkpoint), streamed
+	// on a field separate from Content, DeepSeek-R1-API-style.
+	ReasoningContent *string `json:"reasoning_content"`
 }
 
 type oaiToolCallDelta struct {
@@ -317,6 +321,11 @@ type pendingToolCall struct {
 	lastArgs     string // track last sent args to emit only increments
 }
 
+// thinkingBlockIndex is a reserved content-block index for the reasoning
+// stream. It never collides with the text block (0) or tool-call blocks
+// (1+idx), since reasoning always precedes them in the same turn.
+const thinkingBlockIndex = -1
+
 // streamEvents reads OpenAI SSE chunks from resp and emits api.StreamEvent
 // values compatible with the conversation loop's runOneTurnStreaming.
 func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<- api.StreamEvent) {
@@ -338,11 +347,12 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	var (
-		textStarted  bool
-		toolCalls    = make(map[int]*pendingToolCall)
-		finishReason string
-		outputTokens int
-		inputTokens  int
+		textStarted     bool
+		thinkingStarted bool
+		toolCalls       = make(map[int]*pendingToolCall)
+		finishReason    string
+		outputTokens    int
+		inputTokens     int
 	)
 
 	for scanner.Scan() {
@@ -371,6 +381,27 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 
 		for _, choice := range chunk.Choices {
 			delta := choice.Delta
+
+			// -- Reasoning ("thinking") delta --
+			if delta.ReasoningContent != nil && *delta.ReasoningContent != "" {
+				if !thinkingStarted {
+					thinkingStarted = true
+					if !send(api.StreamEvent{
+						Type:         api.EventContentBlockStart,
+						Index:        thinkingBlockIndex,
+						ContentBlock: api.ContentBlockInfo{Type: "thinking", Index: thinkingBlockIndex},
+					}) {
+						return
+					}
+				}
+				if !send(api.StreamEvent{
+					Type:  api.EventContentBlockDelta,
+					Index: thinkingBlockIndex,
+					Delta: api.Delta{Type: "thinking_delta", Text: *delta.ReasoningContent},
+				}) {
+					return
+				}
+			}
 
 			// -- Text content delta --
 			if delta.Content != nil && *delta.Content != "" {
@@ -448,7 +479,12 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		}
 	}
 
-	// Close the text block.
+	// Close the thinking block, then the text block, in stream order.
+	if thinkingStarted {
+		if !send(api.StreamEvent{Type: api.EventContentBlockStop, Index: thinkingBlockIndex}) {
+			return
+		}
+	}
 	if textStarted {
 		if !send(api.StreamEvent{Type: api.EventContentBlockStop, Index: 0}) {
 			return

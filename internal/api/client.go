@@ -165,6 +165,10 @@ func parseSSEData(data string) (StreamEvent, error) {
 			if textRaw, ok := deltaMap["text"]; ok {
 				json.Unmarshal(textRaw, &event.Delta.Text) //nolint:errcheck
 			}
+			// Extended-thinking deltas carry the chunk under "thinking" instead of "text".
+			if thinkingRaw, ok := deltaMap["thinking"]; ok {
+				json.Unmarshal(thinkingRaw, &event.Delta.Text) //nolint:errcheck
+			}
 			if partialRaw, ok := deltaMap["partial_json"]; ok {
 				json.Unmarshal(partialRaw, &event.Delta.PartialJSON) //nolint:errcheck
 			}

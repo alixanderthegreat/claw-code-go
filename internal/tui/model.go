@@ -86,6 +86,7 @@ const (
 // Bubble Tea messages for async streaming events.
 type (
 	streamDeltaMsg    struct{ text string }
+	streamThinkingMsg struct{ text string }
 	streamToolMsg     struct{ name, input string }
 	streamToolDoneMsg struct{ name, result string }
 	streamUsageMsg    struct{ inputTokens, outputTokens int }
@@ -224,6 +225,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hasStreamContent = true
 		}
 		m.streamBuf += msg.text
+		m = m.refreshViewport()
+		return m, waitForStream(m.streamChan)
+
+	case streamThinkingMsg:
+		if !m.hasStreamContent {
+			m.hasStreamContent = true
+			m.streamBuf += thinkingHeaderStyle.Render("✻ Thinking…") + "\n"
+		}
+		m.streamBuf += thinkingStyle.Render(msg.text)
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
@@ -1457,6 +1467,8 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			switch ev.Type {
 			case runtime.TurnEventTextDelta:
 				return streamDeltaMsg{text: ev.Text}
+			case runtime.TurnEventThinkingDelta:
+				return streamThinkingMsg{text: ev.Text}
 			case runtime.TurnEventToolStart:
 				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput}
 			case runtime.TurnEventToolDone:

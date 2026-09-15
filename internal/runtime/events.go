@@ -5,6 +5,7 @@ type TurnEventType int
 
 const (
 	TurnEventTextDelta     TurnEventType = iota // streaming text chunk
+	TurnEventThinkingDelta                      // streaming reasoning/thinking chunk (discarded from history)
 	TurnEventToolStart                          // tool execution starting
 	TurnEventToolDone                           // tool execution complete
 	TurnEventUsage                              // token usage update
