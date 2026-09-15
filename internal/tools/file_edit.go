@@ -11,7 +11,7 @@ import (
 func FileEditTool() api.Tool {
 	return api.Tool{
 		Name:        "file_edit",
-		Description: "Edit a file by replacing an exact string with new content. Errors if old_string is not found or appears more than once.",
+		Description: "Edit a file by replacing an exact string with new content. You must read the file with read_file in this session before editing it, so the edit is grounded in its real, current content. Errors if old_string is not found or appears more than once.",
 		InputSchema: api.InputSchema{
 			Type: "object",
 			Properties: map[string]api.Property{
