@@ -213,9 +213,16 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 	saveSessionSilent(cfg.SessionDir, loop)
 }
 
-// saveSessionSilent saves the session, printing only to stderr on failure.
+// saveSessionSilent saves the session and prints its ID + resume command on the way out - the
+// whole reason this exists is a real incident: exiting the TUI (accidentally or not) left no
+// visible trail back to that conversation, and finding it again meant grepping session files by
+// mtime. Prints to stderr on failure, matching the name's original "silent unless something's
+// wrong" contract for errors; the resume hint on success is new, not silent by design.
 func saveSessionSilent(dir string, loop *runtime.ConversationLoop) {
 	if err := runtime.SaveSession(dir, loop.Session); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save session: %v\n", err)
+		return
 	}
+	fmt.Printf("Session saved: %s\n", loop.Session.ID)
+	fmt.Printf("Resume with: claw-code-go --session %s\n", loop.Session.ID)
 }
