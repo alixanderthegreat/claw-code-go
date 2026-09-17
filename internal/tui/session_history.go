@@ -2,7 +2,7 @@ package tui
 
 import (
 	"claw-code-go/internal/api"
-	"encoding/json"
+	"claw-code-go/internal/runtime"
 	"fmt"
 	"strings"
 )
@@ -66,7 +66,7 @@ func renderHistory(messages []api.Message) string {
 					}
 				case "tool_use":
 					toolNames[block.ID] = block.Name
-					toolLines = append(toolLines, toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", block.Name, truncate(summarizeHistoryInput(block.Input), 300))))
+					toolLines = append(toolLines, toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", block.Name, truncate(runtime.SummarizeToolInput(block.Input), 300))))
 				}
 			}
 			if len(texts) > 0 {
@@ -79,15 +79,4 @@ func renderHistory(messages []api.Message) string {
 	}
 
 	return sb.String()
-}
-
-// summarizeHistoryInput renders a stored tool_use block's input compactly for the resumed-history
-// view. Not the same helper as runtime's own summarizeToolInput (unexported in a different
-// package) - this one just needs something readable, not the live permission-prompt's exact format.
-func summarizeHistoryInput(input map[string]any) string {
-	b, err := json.Marshal(input)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }
