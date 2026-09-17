@@ -202,7 +202,11 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 	}()
 
 	model := tui.NewModel(cfg, loop)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// WithMouseCellMotion requests real mouse reporting from the terminal - without it, the
+	// terminal has no reason to report wheel events at all, and most substitute synthesized
+	// Up/Down key presses for wheel scroll instead, which the TUI reads as input-history
+	// navigation rather than scrolling the conversation.
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
