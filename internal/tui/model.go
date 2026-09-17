@@ -433,8 +433,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Submit the message.
 		return m.handleSubmit()
 
-	case tea.KeyCtrlJ:
-		// Ctrl+J inserts a real newline into the multi-line input.
+	case tea.KeyCtrlN:
+		// Ctrl+N inserts a real newline into the multi-line input.
 		m.history.Reset()
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1302,7 +1302,7 @@ func (m Model) View() string {
 
 	header := m.renderHeader()
 	divider := dividerStyle.Render(strings.Repeat("─", m.width))
-	hint := statusStyle.Render("Enter=send  Ctrl+J=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
+	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
@@ -1412,7 +1412,7 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Input:"),
 		"  "+userLabelStyle.Render("Enter")+"          Send message",
-		"  "+userLabelStyle.Render("Ctrl+J")+"         Insert newline (multi-line input)",
+		"  "+userLabelStyle.Render("Ctrl+N")+"         Insert newline (multi-line input)",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Navigate input history (single-line mode)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
 		"  "+userLabelStyle.Render("Shift+Tab")+"      Cycle permission mode (default → accept-edits → bypass → plan)",
