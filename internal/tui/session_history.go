@@ -47,7 +47,7 @@ func renderHistory(messages []api.Message) string {
 					if block.IsError {
 						style, mark = toolFailedStyle, "✗"
 					}
-					toolLines = append(toolLines, style.Render(fmt.Sprintf("  %s %s → %s", mark, name, truncate(resultText, 40))))
+					toolLines = append(toolLines, style.Render(fmt.Sprintf("  %s %s → %s", mark, name, truncate(resultText, 500))))
 				}
 			}
 			if len(texts) > 0 {
@@ -66,7 +66,7 @@ func renderHistory(messages []api.Message) string {
 					}
 				case "tool_use":
 					toolNames[block.ID] = block.Name
-					toolLines = append(toolLines, toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", block.Name, truncate(summarizeHistoryInput(block.Input), 60))))
+					toolLines = append(toolLines, toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", block.Name, truncate(summarizeHistoryInput(block.Input), 300))))
 				}
 			}
 			if len(texts) > 0 {

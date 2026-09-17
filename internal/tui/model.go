@@ -258,7 +258,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamToolDoneMsg:
 		suffix := ""
 		if msg.result != "" {
-			suffix = " → " + truncate(msg.result, 120)
+			suffix = " → " + truncate(msg.result, 500)
 		}
 		line := toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
 		m.streamBuf += line

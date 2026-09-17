@@ -822,12 +822,16 @@ func (loop *ConversationLoop) ExecuteToolQuiet(name string, input map[string]any
 	}
 }
 
-// summarizeToolInput returns a short human-readable summary of tool inputs.
+// summarizeToolInput returns a short human-readable summary of tool inputs. 300 chars, not the
+// old 60 - that cap was the real bottleneck behind the live/resumed-history "◆ tool: ..." preview
+// lines looking cut off, even after the TUI's own display-side truncation was already loosened.
+// The permission-ask dialog re-truncates independently at its own tighter width (viewPermission),
+// so raising this doesn't affect that box's layout.
 func summarizeToolInput(input map[string]any) string {
 	for _, key := range []string{"command", "path", "file_path", "pattern", "url", "query", "question"} {
 		if v, ok := input[key].(string); ok {
-			if len(v) > 60 {
-				return v[:60] + "..."
+			if len(v) > 300 {
+				return v[:300] + "..."
 			}
 			return v
 		}
