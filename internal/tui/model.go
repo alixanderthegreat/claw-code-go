@@ -118,6 +118,12 @@ type loginCompleteMsg struct {
 	err      error
 }
 
+// compactDoneMsg is sent when a manual /compact finishes (success or failure).
+type compactDoneMsg struct {
+	summary string
+	err     error
+}
+
 // Model is the Bubble Tea application model.
 type Model struct {
 	state  appState
@@ -225,6 +231,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.resizeViewport()
 		}
 		return m, nil
+
+	case tea.MouseMsg:
+		// Without this, the wheel never reaches us as a real mouse event at all - most
+		// terminals, seeing no mouse-reporting request, substitute synthesized Up/Down key
+		// presses for wheel scroll instead, which land on the textarea's input-history
+		// navigation (tea.KeyUp/KeyDown below) rather than scrolling the conversation. Real
+		// mouse events bypass that entirely; viewport.Model already handles wheel scroll
+		// natively (MouseWheelEnabled defaults to true), this just forwards to it.
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -346,6 +363,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loginCompleteMsg:
 		return m.handleLoginComplete(msg)
+
+	case compactDoneMsg:
+		m.state = stateInput
+		if msg.err != nil {
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Compact failed: %v", msg.err))
+		} else {
+			m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Compacted. Summary of the removed history:\n\n%s", msg.summary))
+		}
+		m = m.refreshViewport()
+		return m, nil
 
 	case spinner.TickMsg:
 		if (m.state == stateBusy && !m.hasStreamContent) || m.state == stateLoginOAuth {
@@ -601,6 +628,9 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 
 	case "/config":
 		return m.handleConfig(parts)
+
+	case "/compact":
+		return m.startCompact()
 
 	case "/exit", "/quit":
 		return m, tea.Quit
@@ -968,6 +998,29 @@ func (m Model) handleLoginAPIKeyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.loginKeyInput, cmd = m.loginKeyInput.Update(msg)
 	return m, cmd
+}
+
+// startCompact runs /compact in the background - it calls the model to summarize, same as
+// automatic compaction, so it can take a few seconds. Reuses stateBusy so the existing
+// "Thinking…" spinner shows for free; no streamBuf content is produced along the way.
+func (m Model) startCompact() (tea.Model, tea.Cmd) {
+	if len(m.loop.Session.Messages) == 0 {
+		m.viewBuf += renderBlock(errorStyle, "Nothing to compact: no messages in this session yet.")
+		m = m.refreshViewport()
+		return m, nil
+	}
+
+	m.state = stateBusy
+	m = m.refreshViewport()
+
+	loop := m.loop
+	return m, tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			summary, err := loop.ManualCompact(context.Background())
+			return compactDoneMsg{summary: summary, err: err}
+		},
+	)
 }
 
 // startOAuthLogin prepares the OAuth session, shows the URL, and waits in background.
@@ -1347,6 +1400,7 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Session"),
 		"  "+userLabelStyle.Render("/clear")+"                          Clear conversation history",
+		"  "+userLabelStyle.Render("/compact")+"                        Summarize older history now, freeing context",
 		"  "+userLabelStyle.Render("/session")+" list                   List saved sessions",
 		"  "+userLabelStyle.Render("/session")+" save [name]            Save current session",
 		"  "+userLabelStyle.Render("/session")+" load <name>            Load a saved session",

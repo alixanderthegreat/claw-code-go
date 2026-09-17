@@ -899,6 +899,26 @@ func (loop *ConversationLoop) ClearSession() {
 	loop.Session.Messages = []api.Message{}
 }
 
+// ManualCompact runs the same compaction runOneTurnStreaming triggers automatically once
+// ShouldCompact's threshold is crossed, but on demand - the /compact escape hatch for a user who
+// wants headroom back right now rather than waiting for the next turn to cross it. Documented in
+// the README as a real slash command since Phase 6, but never actually wired into the command
+// dispatch until now.
+func (loop *ConversationLoop) ManualCompact(ctx context.Context) (string, error) {
+	if len(loop.Session.Messages) == 0 {
+		return "", fmt.Errorf("nothing to compact: no messages in this session yet")
+	}
+	summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
+	if err != nil {
+		return "", err
+	}
+	loop.Compaction.CompactionCount++
+	contMsg := GetContinuationMessage(summary)
+	loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
+	loop.Compaction.LastInputTokens = 0
+	return summary, nil
+}
+
 // ListSessions returns all session IDs saved in the configured session directory.
 func (loop *ConversationLoop) ListSessions() ([]string, error) {
 	return ListSessions(loop.Config.SessionDir)
