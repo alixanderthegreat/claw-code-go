@@ -103,18 +103,50 @@ func (loop *ConversationLoop) SystemPrompt() string {
 	return loop.systemPrompt()
 }
 
-// systemPrompt returns the system prompt, optionally injecting project context,
-// compaction summary, and MCP tool context.
+// appendUserMessage adds a genuine new user turn to the session, with project context
+// (environment, git status, CLAUDE.md - CtxAssembler.Assemble()) prepended ahead of the
+// user's own text in the SAME message, rather than living in the system prompt.
+//
+// This only runs once per real user turn - SendMessage/SendMessageStreaming call it
+// exactly once each, before their tool-use loop starts - not on every iteration of that
+// loop (a single exchange can run many tool round-trips; the assistant's own tool-result
+// messages are appended separately and never carry this prefix). That matters for the
+// same reason the context moved out of the system prompt in the first place: appending
+// it here means every EARLIER message in the session stays byte-identical on every
+// resend, which is what lets kronk's IMC (or any provider's prompt caching) match the
+// prefix up to this new message at all. Only this one new message is "different" from
+// the model's point of view, which is exactly true - the user really did just say
+// something new, and the environment really may have changed since the last turn.
+func (loop *ConversationLoop) appendUserMessage(userText string) {
+	text := userText
+	if loop.CtxAssembler != nil {
+		if projCtx := loop.CtxAssembler.Assemble(); projCtx != "" {
+			text = projCtx + "\n\n" + userText
+		}
+	}
+	loop.Session.Messages = append(loop.Session.Messages, api.Message{
+		Role: "user",
+		Content: []api.ContentBlock{
+			{Type: "text", Text: text},
+		},
+	})
+}
+
+// systemPrompt returns the system prompt: everything in it must stay byte-identical
+// across turns of the same conversation, because it sits at the front of the prefix
+// kronk's IMC (and any provider's own prompt caching) hashes to decide whether a turn
+// can reuse prior work. Project context (environment, git status, CLAUDE.md) used to
+// live here via CtxAssembler.Assemble() - it doesn't anymore, because that block
+// embeds the current wall-clock time (SystemInfo) and live git status, both of which
+// legitimately differ every turn. With volatile content in the system prompt, no two
+// turns of a conversation ever hash the same, and kronk's own request logs confirmed
+// this in practice: imc_match_kind was "rebuild" on 100% of a real session's turns.
+// Assemble()'s output now goes out per-turn instead, prepended to the user's own new
+// message in appendUserMessage - see that function's comment for why that placement
+// is correct rather than just "somewhere else".
 func (loop *ConversationLoop) systemPrompt() string {
 	var parts []string
 	parts = append(parts, systemPromptBase)
-
-	// Inject project context (Phase 12): environment, git status, CLAUDE.md.
-	if loop.CtxAssembler != nil {
-		if ctx := loop.CtxAssembler.Assemble(); ctx != "" {
-			parts = append(parts, ctx)
-		}
-	}
 
 	// Inject compaction summary when the session has one (Phase 6).
 	if loop.Session != nil && loop.Session.CompactionSummary != "" {
@@ -153,13 +185,7 @@ func (loop *ConversationLoop) allTools() []api.Tool {
 
 // SendMessage sends a user message and runs the full agentic loop.
 func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) error {
-	// Append user message
-	loop.Session.Messages = append(loop.Session.Messages, api.Message{
-		Role: "user",
-		Content: []api.ContentBlock{
-			{Type: "text", Text: userText},
-		},
-	})
+	loop.appendUserMessage(userText)
 
 	// Agentic loop: keep going until stop_reason is "end_turn"
 	for {
@@ -356,12 +382,7 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 // TurnEvents to the provided channel. The channel is NOT closed by this function;
 // callers should close it after this returns.
 func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText string, events chan<- TurnEvent) error {
-	loop.Session.Messages = append(loop.Session.Messages, api.Message{
-		Role: "user",
-		Content: []api.ContentBlock{
-			{Type: "text", Text: userText},
-		},
-	})
+	loop.appendUserMessage(userText)
 
 	var totalInput, totalOutput int
 
