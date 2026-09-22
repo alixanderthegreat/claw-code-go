@@ -65,7 +65,7 @@ Native OAuth flow for Anthropic accounts. Credentials are stored securely and re
 Full MCP integration: connect external tool servers over stdio or SSE, register their tools, and let Claude call them seamlessly alongside built-in tools.
 
 ### 🔒 Permissions & Safety
-Fine-grained permission system controls what Claude can do — bash execution, file writes, network access — with configurable modes (`auto`, `ask`, `deny`) and rule-based overrides.
+Fine-grained permission system controls what Claude can do — bash execution, file writes, network access — with configurable modes (`default`, `accept-edits`, `bypass`, `plan`) and rule-based overrides. `bypass` mode still honors an explicit deny rule rather than truly allowing everything unconditionally — see [Server Mode](#server-mode-dispatch-surface) for why that matters.
 
 ### 📦 Context Assembly
 On every turn, claw-code-go automatically injects:
@@ -90,14 +90,14 @@ Drop markdown files into `.claw-code/memory/` and they're injected into every co
 ## Prerequisites
 
 - **Go 1.24+**
-- `ANTHROPIC_API_KEY` environment variable (or log in via `--login`)
+- `ANTHROPIC_API_KEY` environment variable, or run the TUI once and use `/login` (see [Login](#login))
 
 ---
 
 ## Install
 
 ```sh
-git clone https://github.com/daolmedo/claw-code-go
+git clone https://github.com/alixanderthegreat/claw-code-go
 cd claw-code-go
 go build -o claw-code-go ./cmd/claw-code-go
 ```
@@ -105,7 +105,7 @@ go build -o claw-code-go ./cmd/claw-code-go
 Or install directly:
 
 ```sh
-go install github.com/daolmedo/claw-code-go/cmd/claw-code-go@latest
+go install github.com/alixanderthegreat/claw-code-go/cmd/claw-code-go@latest
 ```
 
 ---
@@ -125,22 +125,57 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./claw-code-go --prompt "Refactor the auth package to use interfaces"
 ```
 
-### Login — Anthropic (OAuth)
+### Login
+
+There's no `--login` CLI flag - authenticate from inside the TUI itself:
 
 ```sh
-./claw-code-go --login
-# or explicitly:
-./claw-code-go --login --provider anthropic
+./claw-code-go
+# then, in the TUI:
+/login
 ```
 
-### Login — OpenAI (API key)
+`/login` walks you through picking a provider - Anthropic (OAuth via browser, or an API key entered by hand) or OpenAI (API key only) - and stores the result for next time. If you start the TUI with no credentials on hand, it tells you this directly rather than failing silently.
+
+For a local/custom OpenAI-compatible endpoint instead (self-hosted models, a gateway, etc.), skip `/login` entirely and set `base_url`/`api_key` in `~/.config/claw-code-go/config.json` - see [Local/Custom Models](#localcustom-models) below.
+
+### Local/Custom Models
+
+Point claw-code-go at any OpenAI-compatible endpoint - a self-hosted model server, a gateway, whatever - by writing `~/.config/claw-code-go/config.json`:
+
+```json
+{
+  "base_url": "http://localhost:8080/v1",
+  "api_key": "not-needed",
+  "model": "your-model-id",
+  "context_window": 81920
+}
+```
+
+`context_window` matters more than it looks: it's what compaction is actually measured against (not `max_tokens`, the output cap), and the built-in default is sized for real Claude models. Leave it unset against a small local model and compaction's own trigger point can end up *larger* than the model's real context window - meaning it never fires in time. Set it to your model's real total context length.
+
+When `base_url` is set, claw-code-go switches to an OpenAI-shaped request format automatically (`detectProvider`) - no separate flag needed.
+
+### Server Mode (dispatch surface)
+
+`serve` starts an HTTP server for dispatching tasks programmatically instead of driving the TUI by hand - built for scripted/agent-driven use (a CI step, another tool, a bot), not humans:
 
 ```sh
-./claw-code-go --login --provider openai
-# Prompts for your OpenAI API key and stores it securely
+./claw-code-go serve --addr 127.0.0.1:4097
 ```
 
-Credentials are saved to `~/.claw-code/credentials/` and reused automatically on the next run. Switch providers at any time with `--provider`.
+- `POST /dispatch` - `{"task": "...", "dir": "/path/to/project"}`, returns `{"id": "..."}` immediately, never blocks
+- `GET /session/{id}` - poll for status: `running`, `done`, `failed`, or `interrupted` (a deliberately distinct state from `failed` - see below), plus the session id and message count once known
+- `POST /session/{id}/interrupt` - stop a running dispatch (sends SIGTERM; the dispatched process saves its session and exits cleanly rather than being killed outright)
+- `GET /metrics` - Prometheus text-exposition format: active dispatch count, totals by terminal status, duration sum/count
+
+**How it actually works**: each dispatch spawns claw-code-go itself as a fresh child process (`-prompt <task> -session-dir <isolated dir> -permission-mode bypass`, with the working directory set to `dir`) rather than juggling multiple sessions inside one long-running process. That gives each dispatch real OS-level directory isolation for free - no shared state, no risk of one task's tool calls reaching another's files.
+
+**Two things worth knowing if you're dispatching unattended, not just driving it by hand:**
+- Every dispatch denies `web_fetch`/`web_search` automatically (via `CLAW_CODE_BLOCKED_TOOLS`, no config needed) - `bypass` mode otherwise auto-allows everything, including bash, which is exactly the point of dispatching, but outbound network tools are the one thing this deliberately holds back regardless of that setting.
+- Every dispatch also gets a path-boundary check (`CLAW_CODE_DISPATCH_BOUNDARY`) refusing `read_file`/`write_file`/`file_edit` calls that resolve outside its own working directory - defense in depth on top of the OS-level isolation above. This does **not** extend to `bash` - a shell command string isn't a structured path, so `cd .. && rm file` isn't something a per-argument check can catch. Scope `dir` to exactly the project you mean, not a parent directory holding other things you care about.
+
+**Security**: `serve` has no authentication at all, and every dispatch runs with every tool auto-allowed. `--addr` defaults to `127.0.0.1` (loopback) for exactly this reason - widen it (e.g. `0.0.0.0:4097`, to let something like Prometheus reach it) only when you mean to, understanding that a bare host process bound wider than loopback has no container/network isolation containing that exposure the way a Docker-internal service would.
 
 ### Resume a session
 
@@ -154,14 +189,25 @@ Credentials are saved to `~/.claw-code/credentials/` and reused automatically on
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--prompt` | — | Single prompt (one-shot mode) |
-| `--model` | `claude-sonnet-4-20250514` | Model to use |
-| `--provider` | `anthropic` | AI provider: `anthropic`, `openai` |
-| `--repl` | false | Force interactive REPL mode |
-| `--login` | false | Authenticate for the selected provider |
+| `--prompt` | — | Single prompt (one-shot mode) - runs synchronously and exits when done |
+| `--model` | `claude-sonnet-4-20250514` | Override the model to use |
 | `--session` | — | Resume a saved session by ID |
 | `--session-dir` | `~/.claw-code/sessions` | Directory for session files |
-| `--permission-mode` | `ask` | Permission mode: `auto`, `ask`, `deny` |
+| `--permission-mode` | `default` | `default` (ask when needed), `accept-edits` (auto-allow read/edit tools, still ask for bash), `bypass` (allow everything, never ask - see [Server Mode](#server-mode-dispatch-surface)), `plan` (describe only, never execute) |
+
+There's no `--login` or `--provider` flag - see [Login](#login) above. `--repl` is currently declared but not wired to anything (a no-op); the TUI is already the default whenever `--prompt` isn't set.
+
+### Subcommands
+
+Separate from the flags above - these run once and exit, no TUI involved:
+
+| Subcommand | Description |
+|------------|-------------|
+| `dump-manifests [--src <dir>] [--json]` | List tools, slash commands, and the source manifest |
+| `bootstrap-plan [--json]` | Print the ordered startup phase plan |
+| `print-system-prompt [--cwd] [--date]` | Render the full system prompt as it would actually be sent |
+| `resume-session <file> [commands...]` | Replay a saved session file |
+| `serve [--addr] [--session-root]` | Start the dispatch server - see below |
 
 ---
 
@@ -170,6 +216,7 @@ Credentials are saved to `~/.claw-code/credentials/` and reused automatically on
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
+| `/login` | Authenticate - pick a provider, OAuth or API key |
 | `/clear` | Clear the current session |
 | `/session-list` | Browse saved sessions |
 | `/model <name>` | Switch model mid-session |
@@ -186,7 +233,13 @@ Credentials are saved to `~/.claw-code/credentials/` and reused automatically on
 | `ANTHROPIC_API_KEY` | Your Anthropic API key |
 | `ANTHROPIC_MODEL` | Override the default model |
 | `ANTHROPIC_BASE_URL` | Override the Anthropic API base URL |
-| `OPENAI_API_KEY` | OpenAI API key (if using OpenAI provider) |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_BASE_URL` | Override the OpenAI-compatible base URL - setting either this or `ANTHROPIC_BASE_URL` switches to the OpenAI-shaped request format (see [Local/Custom Models](#localcustom-models)) |
+| `CLAW_CONTEXT_WINDOW` | The model's real total context length in tokens - env var equivalent of `config.json`'s `context_window`, same reason it matters (compaction's trigger point) |
+| `CLAW_CODE_BLOCKED_TOOLS` | Comma-separated tool names to explicitly deny, even in `bypass` mode - what `serve` sets per dispatch, not usually something you set by hand |
+| `BRAVE_API_KEY` | Powers the `web_search` tool |
+| `CLAUDE_MCP_SERVERS` | JSON array of MCP server configs, layered alongside any configured via settings files |
+| `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY` | Set to `1` to route through AWS Bedrock / Google Vertex AI / Azure AI Foundry instead |
 
 ---
 
@@ -196,15 +249,16 @@ Credentials are saved to `~/.claw-code/credentials/` and reused automatically on
 claw-code-go/
 ├── cmd/claw-code-go/        # CLI entry point
 └── internal/
-    ├── api/                 # Anthropic API client (SSE streaming, types)
+    ├── api/                 # Multi-provider API clients (Anthropic, OpenAI, Bedrock, Vertex, Foundry) + SSE streaming, types
     ├── auth/                # OAuth flow, credential storage, token refresh
     ├── commands/            # Slash command registry
-    ├── compat/              # Upstream TS source parity manifest
-    ├── config/              # Config loading, permission modes, rules
+    ├── compat/              # Upstream TS source parity manifest + diagnostic subcommands
+    ├── config/              # Global config file (~/.config/claw-code-go/config.json)
     ├── context/             # Context assembly (git, memory, sysinfo)
     ├── mcp/                 # Model Context Protocol client (stdio + SSE)
     ├── permissions/         # Permission enforcement & rule engine
-    ├── runtime/             # Agentic conversation loop, session persistence
+    ├── runtime/             # Agentic conversation loop, config, session persistence
+    ├── serve/               # HTTP dispatch server (see Server Mode) - process-per-dispatch, /metrics
     ├── tools/               # Built-in tool implementations
     ├── tui/                 # Bubble Tea TUI (model, styles, theme, history)
     └── usage/               # Token tracking and cost estimation
@@ -229,6 +283,7 @@ claw-code-go/
 - [x] Phase 13 — Cost tracking + session history UI
 - [ ] Phase 14 — LSP integration
 - [ ] Phase 15 — Plugin/extension system
+- [x] Phase 16 — Dispatch server (`serve` mode): HTTP API, Prometheus metrics, distinct interrupted/failed/done states
 
 ---
 
