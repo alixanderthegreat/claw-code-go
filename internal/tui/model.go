@@ -154,6 +154,22 @@ type Model struct {
 
 	// channel from active streaming goroutine
 	streamChan chan runtime.TurnEvent
+	// cancels the context behind the current in-flight turn (nil when idle).
+	// Esc in stateBusy calls this rather than tea.Quit, so it stops just the
+	// turn - the request in flight to the model, and any tool it's mid-run
+	// on - not the whole program. Before this existed, Ctrl+C (which DOES
+	// quit) was the only key stateBusy handled at all.
+	streamCancel context.CancelFunc
+	// true from the moment streamCancel is actually called until the turn's
+	// resulting error is shown. A cancelled turn always ends as a
+	// streamErrMsg (the client's own context.Canceled, surfaced through
+	// conversation.go's fmt.Errorf("stream error: %s", ...) - %s, not %w,
+	// so errors.Is(err, context.Canceled) can't reliably match it once it's
+	// round-tripped through that string). Tracking intent locally, rather
+	// than trying to recover it from the error's text, is what makes the
+	// "Cancelled." message reliable regardless of exactly when the cancel
+	// landed (mid-connect vs. mid-stream take different error paths).
+	turnCancelled bool
 
 	// permission ask state
 	permToolName  string
@@ -300,6 +316,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.hasStreamContent = false
 		m.state = stateInput
+		m.streamCancel = nil
+		m.turnCancelled = false
 		m = m.refreshViewport()
 		m.viewport.GotoBottom()
 		// Update status bar with final token counts.
@@ -339,10 +357,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamErrMsg:
-		m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error: %v", msg.err))
+		if m.turnCancelled {
+			m.viewBuf += renderBlock(statusStyle, "Cancelled.")
+		} else {
+			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error: %v", msg.err))
+		}
 		m.streamBuf = ""
 		m.hasStreamContent = false
 		m.state = stateInput
+		m.streamCancel = nil
+		m.turnCancelled = false
 		m = m.refreshViewport()
 		return m, nil
 
@@ -418,8 +442,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateLoginOAuth:
 		return m.handleLoginOAuthKey(msg)
 	case stateBusy:
-		if msg.Type == tea.KeyCtrlC {
+		switch msg.Type {
+		case tea.KeyCtrlC:
 			return m, tea.Quit
+		case tea.KeyEsc:
+			if m.streamCancel != nil {
+				m.turnCancelled = true
+				m.streamCancel()
+			}
+			return m, nil
 		}
 		return m, nil
 	}
@@ -1177,10 +1208,14 @@ func (m Model) startMessage(text string) (tea.Model, tea.Cmd) {
 	ch := make(chan runtime.TurnEvent, 64)
 	m.streamChan = ch
 
+	ctx, cancel := context.WithCancel(context.Background())
+	m.streamCancel = cancel
+	m.turnCancelled = false
+
 	loop := m.loop
 	go func() {
 		defer close(ch)
-		loop.SendMessageStreaming(context.Background(), text, ch) //nolint:errcheck
+		loop.SendMessageStreaming(ctx, text, ch) //nolint:errcheck
 	}()
 
 	m = m.refreshViewport()
@@ -1327,14 +1362,20 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderStatusBar() string {
+	var bar string
 	if m.inputTokens > 0 || m.outputTokens > 0 {
-		return statusStyle.Render(fmt.Sprintf(
+		bar = fmt.Sprintf(
 			"Tokens: %s in / %s out  │  Session: %s",
 			formatNum(m.inputTokens), formatNum(m.outputTokens),
 			m.loop.Session.ID,
-		))
+		)
+	} else {
+		bar = "Session: " + m.loop.Session.ID
 	}
-	return statusStyle.Render("Session: " + m.loop.Session.ID)
+	if m.state == stateBusy {
+		bar += "  │  Esc to cancel"
+	}
+	return statusStyle.Render(bar)
 }
 
 // renderInputArea renders the multi-line input with a "> " prefix on the first line.
