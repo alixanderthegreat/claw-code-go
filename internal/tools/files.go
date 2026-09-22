@@ -77,6 +77,9 @@ func ExecuteReadFile(input map[string]any) (string, error) {
 	if !ok || path == "" {
 		return "", fmt.Errorf("read_file: 'path' input is required and must be a string")
 	}
+	if err := requireWithinDispatchBoundary(path); err != nil {
+		return "", fmt.Errorf("read_file: %w", err)
+	}
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -190,6 +193,9 @@ func ExecuteWriteFile(input map[string]any) (string, error) {
 	content, ok := input["content"].(string)
 	if !ok {
 		return "", fmt.Errorf("write_file: 'content' input is required and must be a string")
+	}
+	if err := requireWithinDispatchBoundary(path); err != nil {
+		return "", fmt.Errorf("write_file: %w", err)
 	}
 
 	// Create parent directories if needed

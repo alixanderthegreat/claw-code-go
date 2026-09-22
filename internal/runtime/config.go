@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -130,6 +131,20 @@ func LoadConfig() *Config {
 	if ctxWindow := os.Getenv("CLAW_CONTEXT_WINDOW"); ctxWindow != "" {
 		if n, err := strconv.Atoi(ctxWindow); err == nil && n > 0 {
 			cfg.ContextWindow = n
+		}
+	}
+	// CLAW_CODE_BLOCKED_TOOLS: comma-separated tool names, merged into the ruleset
+	// as explicit deny rules further down (main.go). AllowedTools/BlockedTools
+	// existed on Config already but nothing ever populated them - this is that
+	// population, and it exists specifically for kata 84's dispatch server
+	// (internal/serve sets it per child process) to deny web_fetch/web_search for
+	// unattended use without touching the interactive TUI's own default behavior,
+	// which never sets this env var at all.
+	if blocked := os.Getenv("CLAW_CODE_BLOCKED_TOOLS"); blocked != "" {
+		for _, tool := range strings.Split(blocked, ",") {
+			if tool = strings.TrimSpace(tool); tool != "" {
+				cfg.BlockedTools = append(cfg.BlockedTools, tool)
+			}
 		}
 	}
 

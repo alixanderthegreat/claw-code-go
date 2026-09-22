@@ -26,12 +26,19 @@ func NewManager(mode PermissionMode, rules *Ruleset) *Manager {
 
 // Check returns the Decision for the given tool and input summary.
 //
-//   - BypassPermissions → always Allow
+//   - BypassPermissions → Allow, UNLESS the ruleset explicitly denies this tool
+//     (kata 84 Test 2: bypass used to short-circuit before ever consulting the
+//     ruleset, so there was no way to auto-allow everything except a specific
+//     tool - the exact shape unattended dispatch needs, e.g. deny web_fetch/
+//     web_search while still allowing bash/read/write/edit with no prompting)
 //   - Plan             → always Deny
 //   - Otherwise        → consult session cache, then ruleset, then Ask
 func (m *Manager) Check(tool, input string) Decision {
 	switch m.Mode {
 	case ModeBypassPermissions:
+		if d, ok := m.Rules.Match(tool, input); ok && d == DecisionDeny {
+			return DecisionDeny
+		}
 		return DecisionAllow
 	case ModePlan:
 		return DecisionDeny

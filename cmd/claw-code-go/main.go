@@ -6,12 +6,15 @@ import (
 	"claw-code-go/internal/compat"
 	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
+	"claw-code-go/internal/serve"
 	"claw-code-go/internal/tui"
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +36,9 @@ func main() {
 		case "resume-session":
 			compat.RunResumeSession(os.Args[2:])
 			return
+		case "serve":
+			runServe(os.Args[2:])
+			return
 		}
 	}
 
@@ -50,7 +56,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  dump-manifests [--src <dir>] [--json]   List tools, slash commands, and source manifest\n")
 		fmt.Fprintf(os.Stderr, "  bootstrap-plan [--json]                 Print the ordered startup phase plan\n")
 		fmt.Fprintf(os.Stderr, "  print-system-prompt [--cwd] [--date]    Render the full system prompt\n")
-		fmt.Fprintf(os.Stderr, "  resume-session <file> [commands...]     Replay a saved session file\n\n")
+		fmt.Fprintf(os.Stderr, "  resume-session <file> [commands...]     Replay a saved session file\n")
+		fmt.Fprintf(os.Stderr, "  serve [--addr] [--session-root]         Minimal dispatch server (kata 84) - loopback only, no auth\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment variables:\n")
@@ -168,7 +175,12 @@ func main() {
 			<-sigCh
 			fmt.Fprintln(os.Stdout, "\nInterrupted. Saving session...")
 			saveSessionSilent(cfg.SessionDir, loop)
-			os.Exit(0)
+			// A distinct exit code, not 0 - kata 84 Test 3 found live that an
+			// interrupted dispatch and a naturally-completed one were
+			// indistinguishable at the process level (both exited 0), leaving
+			// internal/serve's classifyStatus to guess from message_count alone.
+			// See exitCodeInterrupted's own doc comment for why this exact value.
+			os.Exit(serve.ExitCodeInterrupted)
 		}()
 
 		ctx := context.Background()
@@ -229,4 +241,49 @@ func saveSessionSilent(dir string, loop *runtime.ConversationLoop) {
 	}
 	fmt.Printf("Session saved: %s\n", loop.Session.ID)
 	fmt.Printf("Resume with: claw-code-go --session %s\n", loop.Session.ID)
+}
+
+// runServe starts the minimal dispatch server (kata 84 Test 1) - see
+// internal/serve's own package doc for the real design decision behind it
+// (process-per-dispatch, not an in-process session registry).
+func runServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	// Loopback by default: this has no authentication and spawns child processes
+	// with -permission-mode bypass (bash auto-allowed). Widening this to 0.0.0.0
+	// (e.g. for Prometheus, which runs in a container and needs host.docker.internal
+	// to reach a BARE HOST process like this one - unlike kronk's own debug server,
+	// there is no Docker network isolation containing the exposure here) is a real,
+	// understood tradeoff to opt into per-session, not a default to change quietly.
+	addr := fs.String("addr", "127.0.0.1:4097", "address to listen on - loopback by default, no authentication; widen deliberately (e.g. 0.0.0.0:4097) only when you want Prometheus/Grafana visibility for this session")
+	sessionRoot := fs.String("session-root", "", "parent directory for per-dispatch session directories (default: ~/.claw-code/dispatches)")
+	fs.Parse(args)
+
+	binaryPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve: resolve own binary path: %v\n", err)
+		os.Exit(1)
+	}
+
+	root := *sessionRoot
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "serve: resolve home dir: %v\n", err)
+			os.Exit(1)
+		}
+		root = filepath.Join(home, ".claw-code", "dispatches")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: create session root: %v\n", err)
+		os.Exit(1)
+	}
+
+	reg := serve.NewRegistry(binaryPath, root)
+	srv := serve.NewServer(reg)
+
+	fmt.Fprintf(os.Stderr, "serve: listening on %s, dispatch sessions under %s\n", *addr, root)
+	if err := http.ListenAndServe(*addr, srv.Mux()); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		os.Exit(1)
+	}
 }
