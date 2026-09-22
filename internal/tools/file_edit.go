@@ -47,6 +47,14 @@ func ExecuteFileEdit(input map[string]any) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("file_edit: 'new_string' is required")
 	}
+	// A real, live transcript on 2026-09-22 showed the model report a no-op edit as a
+	// success, then spend a whole extra turn re-reading the file and reasoning out on
+	// its own that "old_string and new_string are identical" before it could retry with
+	// an actual change. Catching this here means the model finds out immediately, in the
+	// same tool call, instead of discovering it after the fact.
+	if oldString == newString {
+		return "", fmt.Errorf("file_edit: old_string and new_string are identical - no change would be made; if you meant to change something, old_string does not match what you intended")
+	}
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
