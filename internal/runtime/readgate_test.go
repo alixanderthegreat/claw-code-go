@@ -20,7 +20,7 @@ func TestWriteFileRefusedWithoutPriorRead(t *testing.T) {
 	}
 
 	loop := newTestLoop()
-	result := loop.ExecuteToolQuiet("write_file", map[string]any{"path": path, "content": "new"})
+	result := loop.ExecuteTool("write_file", map[string]any{"path": path, "content": "new"})
 	if !result.IsError {
 		t.Fatalf("expected write_file to be refused without a prior read_file, got success")
 	}
@@ -40,11 +40,11 @@ func TestWriteFileAllowedAfterRead(t *testing.T) {
 	}
 
 	loop := newTestLoop()
-	if r := loop.ExecuteToolQuiet("read_file", map[string]any{"path": path}); r.IsError {
+	if r := loop.ExecuteTool("read_file", map[string]any{"path": path}); r.IsError {
 		t.Fatalf("read_file failed: %v", r.Content)
 	}
 
-	result := loop.ExecuteToolQuiet("write_file", map[string]any{"path": path, "content": "new\n"})
+	result := loop.ExecuteTool("write_file", map[string]any{"path": path, "content": "new\n"})
 	if result.IsError {
 		t.Fatalf("write_file should be allowed after read_file, got error: %v", result.Content)
 	}
@@ -62,7 +62,7 @@ func TestWriteFileNewFileNeedsNoPriorRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "brandnew.txt")
 
 	loop := newTestLoop()
-	result := loop.ExecuteToolQuiet("write_file", map[string]any{"path": path, "content": "hello\n"})
+	result := loop.ExecuteTool("write_file", map[string]any{"path": path, "content": "hello\n"})
 	if result.IsError {
 		t.Fatalf("creating a new file should not require a prior read, got error: %v", result.Content)
 	}
@@ -76,7 +76,7 @@ func TestFileEditRefusedWithoutPriorRead(t *testing.T) {
 	}
 
 	loop := newTestLoop()
-	result := loop.ExecuteToolQuiet("file_edit", map[string]any{
+	result := loop.ExecuteTool("file_edit", map[string]any{
 		"file_path": path, "old_string": "original", "new_string": "changed",
 	})
 	if !result.IsError {

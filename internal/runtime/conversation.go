@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const systemPromptBase = `You are Gordi Code, an AI assistant for software engineering tasks. You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks.`
@@ -183,200 +184,45 @@ func (loop *ConversationLoop) allTools() []api.Tool {
 	return combined
 }
 
-// SendMessage sends a user message and runs the full agentic loop.
+// SendMessage runs the same agentic loop as SendMessageStreaming - so the same
+// permission checks, input validation and failure limit - for callers with no
+// one to answer a prompt: -prompt, every serve dispatch, the compat harness.
+// It prints the turn to stdout, denies any call that would need a permission
+// prompt, and answers ask_user with its non-interactive fallback.
 func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) error {
-	loop.closeDanglingToolUses()
-	loop.appendUserMessage(userText)
+	events := make(chan TurnEvent)
+	done := make(chan error, 1)
+	go func() {
+		done <- loop.SendMessageStreaming(ctx, userText, events)
+		close(events)
+	}()
 
-	// Agentic loop: keep going until stop_reason is "end_turn"
-	for {
-		// Compact history if approaching the token budget (Phase 6). Checked
-		// on every iteration since a single exchange can run many tool-use
-		// round-trips, each growing the history resent on the next turn.
-		if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
-			summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
-			} else {
-				loop.Compaction.CompactionCount++
-				// Prepend a continuation marker to the retained recent messages.
-				contMsg := GetContinuationMessage(summary)
-				loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
-				loop.Compaction.LastInputTokens = 0
-			}
-		}
-
-		stopReason, err := loop.runOneTurn(ctx)
-		if err != nil {
-			return err
-		}
-
-		if stopReason != "tool_use" {
-			break
-		}
-	}
-
-	return nil
-}
-
-// runOneTurn sends the current session messages to the API and processes the response.
-// Returns the stop_reason.
-func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
-	req := api.CreateMessageRequest{
-		Model:     loop.Config.Model,
-		MaxTokens: loop.Config.MaxTokens,
-		System:    loop.systemPrompt(),
-		Messages:  loop.Session.Messages,
-		Tools:     loop.allTools(),
-		Stream:    true,
-	}
-
-	ch, err := loop.Client.StreamResponse(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("stream response: %w", err)
-	}
-
-	// Accumulators for the current response
-	type toolBlock struct {
-		id          string
-		name        string
-		inputBuffer string
-	}
-
-	var (
-		textBlocks     []api.ContentBlock
-		toolOrder      []int
-		toolBlocksByIx = make(map[int]*toolBlock)
-		currentText    string
-		stopReason     string
-		blockTypeMap   = make(map[int]string) // index -> "text" or "tool_use"
-	)
-
-	for event := range ch {
-		switch event.Type {
-		case api.EventError:
-			return "", fmt.Errorf("stream error: %s", event.ErrorMessage)
-
-		case api.EventContentBlockStart:
-			blockTypeMap[event.Index] = event.ContentBlock.Type
-			if event.ContentBlock.Type == "tool_use" {
-				toolBlocksByIx[event.Index] = &toolBlock{
-					id:   event.ContentBlock.ID,
-					name: event.ContentBlock.Name,
-				}
-				toolOrder = append(toolOrder, event.Index)
-			}
-
-		case api.EventContentBlockDelta:
-			switch event.Delta.Type {
-			case "text_delta":
-				currentText += event.Delta.Text
-				fmt.Fprint(os.Stdout, event.Delta.Text)
-
-			case "thinking_delta":
-				fmt.Fprint(os.Stdout, event.Delta.Text)
-
-			case "input_json_delta":
-				if tb, ok := toolBlocksByIx[event.Index]; ok {
-					tb.inputBuffer += event.Delta.PartialJSON
-				}
-			}
-
-		case api.EventContentBlockStop:
-			bType, ok := blockTypeMap[event.Index]
-			if ok && bType == "text" && currentText != "" {
-				textBlocks = append(textBlocks, api.ContentBlock{
-					Type: "text",
-					Text: currentText,
-				})
-				currentText = ""
-			}
-			if ok && bType == "thinking" {
-				fmt.Fprintln(os.Stdout)
-				fmt.Fprintln(os.Stdout)
-			}
-
-		case api.EventMessageDelta:
-			stopReason = event.StopReason
-
-		case api.EventMessageStop:
-			// Stream complete
+	// The failure limit ends a turn with an error event but a nil return, so
+	// keep the event's error: an unattended run that gave up has still failed.
+	var turnErr error
+	for ev := range events {
+		switch ev.Type {
+		case TurnEventTextDelta, TurnEventThinkingDelta:
+			fmt.Fprint(os.Stdout, ev.Text)
+		case TurnEventToolStart:
+			fmt.Fprintf(os.Stdout, "\n[Tool: %s]\n", ev.ToolName)
+		case TurnEventToolDone:
+			fmt.Fprintln(os.Stdout, ev.ToolResult)
+		case TurnEventPermissionAsk:
+			fmt.Fprintf(os.Stderr, "[permission] denied %s %s: nobody to ask in non-interactive mode - allow it with a rule or -permission-mode\n", ev.ToolName, ev.ToolInput)
+			ev.PermReply <- PermDecisionDeny
+		case TurnEventAskUser:
+			ev.AskUserReply <- tools.AskUserFallback(ev.ToolInput).Content[0].Text
+		case TurnEventError:
+			turnErr = ev.Err
+		case TurnEventDone:
+			fmt.Fprintln(os.Stdout)
 		}
 	}
-
-	toolBlocks := make([]toolBlock, 0, len(toolOrder))
-	for _, idx := range toolOrder {
-		toolBlocks = append(toolBlocks, *toolBlocksByIx[idx])
+	if err := <-done; err != nil {
+		return err
 	}
-
-	// Ensure trailing newline after streaming text
-	if len(textBlocks) > 0 || len(toolBlocks) > 0 {
-		fmt.Fprintln(os.Stdout)
-	}
-
-	// Build the assistant message content
-	var assistantContent []api.ContentBlock
-
-	// Add text blocks first
-	assistantContent = append(assistantContent, textBlocks...)
-
-	// Add tool_use blocks
-	for _, tb := range toolBlocks {
-		var inputMap map[string]any
-		if tb.inputBuffer != "" {
-			if err := json.Unmarshal([]byte(tb.inputBuffer), &inputMap); err != nil {
-				inputMap = map[string]any{"raw": tb.inputBuffer}
-			}
-		} else {
-			inputMap = map[string]any{}
-		}
-
-		assistantContent = append(assistantContent, api.ContentBlock{
-			Type:  "tool_use",
-			ID:    tb.id,
-			Name:  tb.name,
-			Input: inputMap,
-		})
-	}
-
-	// Append assistant message to session
-	if len(assistantContent) > 0 {
-		loop.Session.Messages = append(loop.Session.Messages, api.Message{
-			Role:    "assistant",
-			Content: assistantContent,
-		})
-	}
-
-	// If stop_reason is tool_use, execute tools and append results
-	if stopReason == "tool_use" {
-		var toolResults []api.ContentBlock
-
-		for _, tb := range toolBlocks {
-			var inputMap map[string]any
-			for _, cb := range assistantContent {
-				if cb.Type == "tool_use" && cb.ID == tb.id {
-					inputMap = cb.Input
-					break
-				}
-			}
-			if inputMap == nil {
-				inputMap = map[string]any{}
-			}
-
-			fmt.Fprintf(os.Stdout, "\n[Tool: %s]\n", tb.name)
-			result := loop.ExecuteTool(tb.name, inputMap)
-			result.ToolUseID = tb.id
-			toolResults = append(toolResults, result)
-		}
-
-		// Append tool results as a user message
-		loop.Session.Messages = append(loop.Session.Messages, api.Message{
-			Role:    "user",
-			Content: toolResults,
-		})
-	}
-
-	return stopReason, nil
+	return turnErr
 }
 
 // SendMessageStreaming sends a user message and runs the full agentic loop, emitting
@@ -387,6 +233,10 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	loop.appendUserMessage(userText)
 
 	var totalInput, totalOutput int
+	// invalidStreak counts invalid tool calls in a row across the whole
+	// exchange: a model stuck on a bad call usually makes one per response,
+	// so a count that restarts every response would never reach the limit.
+	var invalidStreak int
 
 	for {
 		// Compact history if approaching the token budget (Phase 6). Checked
@@ -406,8 +256,13 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			}
 		}
 
-		stopReason, inTok, outTok, err := loop.runOneTurnStreaming(ctx, events)
+		stopReason, inTok, outTok, err := loop.runOneTurnStreaming(ctx, events, &invalidStreak)
 		if err != nil {
+			// A failed request reports no usage, so the last count is from a
+			// smaller, earlier history - often the very request that then
+			// overflowed. Forget it so the next check estimates from the
+			// history itself and compaction can still fire.
+			loop.Compaction.LastInputTokens = 0
 			events <- TurnEvent{Type: TurnEventError, Err: err}
 			return err
 		}
@@ -444,9 +299,10 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	return nil
 }
 
-// runOneTurnStreaming streams one API turn and sends TurnEvents.
+// runOneTurnStreaming streams one API turn and sends TurnEvents, carrying the
+// exchange's run of invalid tool calls in invalidStreak.
 // Returns stop_reason, inputTokens, outputTokens, error.
-func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events chan<- TurnEvent) (string, int, int, error) {
+func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events chan<- TurnEvent, invalidStreak *int) (string, int, int, error) {
 	req := api.CreateMessageRequest{
 		Model:     loop.Config.Model,
 		MaxTokens: loop.Config.MaxTokens,
@@ -583,7 +439,6 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	// Execute tools if needed
 	if stopReason == "tool_use" {
 		var toolResults []api.ContentBlock
-		var consecutiveFailures int
 		const maxConsecutiveFailures = 3
 
 		// unrunFrom lists the tool calls from index j on, which will not run
@@ -733,7 +588,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				return cancelled(i)
 			}
 
-			result := loop.ExecuteToolQuiet(tb.name, inputMap)
+			result := loop.ExecuteTool(tb.name, inputMap)
 			result.ToolUseID = tb.id
 			toolResults = append(toolResults, result)
 
@@ -750,14 +605,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 
 			// Track consecutive tool failures to prevent infinite retry loops.
 			if result.IsError && strings.Contains(resultText, "missing required input fields") {
-				consecutiveFailures++
+				*invalidStreak++
 			} else {
-				consecutiveFailures = 0
+				*invalidStreak = 0
 			}
 		}
 
 		// If the model keeps generating invalid tool inputs, stop and report.
-		if consecutiveFailures >= maxConsecutiveFailures {
+		if *invalidStreak >= maxConsecutiveFailures {
 			loop.appendToolResults(toolResults, nil, "")
 			events <- TurnEvent{
 				Type: TurnEventError,
@@ -816,8 +671,44 @@ func (loop *ConversationLoop) closeDanglingToolUses() {
 	}
 }
 
-// ExecuteToolQuiet dispatches to the appropriate tool without printing to stdout/stderr.
-func (loop *ConversationLoop) ExecuteToolQuiet(name string, input map[string]any) api.ContentBlock {
+// ExecuteTool runs one tool call and returns its result, bounded so that no
+// single result can push the next request past the context window.
+func (loop *ConversationLoop) ExecuteTool(name string, input map[string]any) api.ContentBlock {
+	return capToolResult(loop.dispatchTool(name, input), loop.maxToolResultChars())
+}
+
+// maxToolResultChars allows a tool result about a quarter of the context
+// window. Bounds used to live inside individual tools, so a tool without one
+// slipped through: a glob over a big tree returned 855 KB (~200k tokens) to a
+// 40960-token model, and every later request in that session failed.
+func (loop *ConversationLoop) maxToolResultChars() int {
+	window := loop.Config.ContextWindow
+	if window <= 0 {
+		window = DefaultContextWindow
+	}
+	return window / 4 * charsPerToken
+}
+
+// capToolResult truncates each text block of result to limit bytes, on a rune
+// boundary, and says so - with the full size - so the model knows to narrow
+// its request rather than trust a partial listing as complete.
+func capToolResult(result api.ContentBlock, limit int) api.ContentBlock {
+	for i, cb := range result.Content {
+		if len(cb.Text) <= limit {
+			continue
+		}
+		cut := limit
+		for cut > 0 && !utf8.RuneStart(cb.Text[cut]) {
+			cut--
+		}
+		result.Content[i].Text = cb.Text[:cut] + fmt.Sprintf(
+			"\n... [truncated: showing %d of %d bytes - narrow the request to see the rest]", cut, len(cb.Text))
+	}
+	return result
+}
+
+// dispatchTool validates input and routes a call to its tool implementation.
+func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) api.ContentBlock {
 	if !CheckPermission(loop.Permissions, name) {
 		return api.ContentBlock{
 			Type:    "tool_result",
@@ -1058,107 +949,6 @@ func (loop *ConversationLoop) MessageCount() int {
 		return 0
 	}
 	return len(loop.Session.Messages)
-}
-
-// ExecuteTool dispatches to the appropriate tool implementation.
-func (loop *ConversationLoop) ExecuteTool(name string, input map[string]any) api.ContentBlock {
-	if !CheckPermission(loop.Permissions, name) {
-		return api.ContentBlock{
-			Type:    "tool_result",
-			Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", name)}},
-			IsError: true,
-		}
-	}
-
-	var result string
-	var err error
-
-	switch name {
-	case "bash":
-		result, err = tools.ExecuteBash(input)
-	case "read_file":
-		result, err = tools.ExecuteReadFile(input)
-		if err == nil {
-			if path, ok := input["path"].(string); ok {
-				loop.markRead(path)
-			}
-		}
-	case "write_file":
-		path, _ := input["path"].(string)
-		if err = loop.requireReadBeforeWrite(path); err == nil {
-			result, err = tools.ExecuteWriteFile(input)
-			if err == nil {
-				loop.markRead(path)
-			}
-		}
-	case "glob":
-		result, err = tools.ExecuteGlob(input)
-	case "grep":
-		result, err = tools.ExecuteGrep(input)
-	case "file_edit":
-		path, _ := input["file_path"].(string)
-		if err = loop.requireReadBeforeWrite(path); err == nil {
-			result, err = tools.ExecuteFileEdit(input)
-			if err == nil {
-				loop.markRead(path)
-			}
-		}
-	case "web_fetch":
-		result, err = tools.ExecuteWebFetch(input)
-	case "web_search":
-		result, err = tools.ExecuteWebSearch(input)
-	case "ask_user":
-		q, ok := tools.AskUserInput(input)
-		if !ok {
-			err = fmt.Errorf("ask_user: 'question' is required")
-		} else {
-			cb := tools.AskUserFallback(q)
-			fmt.Fprintf(os.Stdout, "%s\n", cb.Content[0].Text)
-			return cb
-		}
-	case "todo_write":
-		result, err = tools.ExecuteTodoWrite(input)
-	default:
-		// Fall back to MCP registry.
-		if loop.MCPRegistry != nil {
-			if client, _, ok := loop.MCPRegistry.FindTool(name); ok {
-				mcpResult, mcpErr := client.CallTool(context.Background(), name, input)
-				if mcpErr != nil {
-					fmt.Fprintf(os.Stderr, "[MCP tool %s error]: %v\n", name, mcpErr)
-					return api.ContentBlock{
-						Type:    "tool_result",
-						Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Error: %v", mcpErr)}},
-						IsError: true,
-					}
-				}
-				text := mcpResultText(mcpResult)
-				fmt.Fprintf(os.Stdout, "%s\n", text)
-				return api.ContentBlock{
-					Type:    "tool_result",
-					Content: []api.ContentBlock{{Type: "text", Text: text}},
-					IsError: mcpResult.IsError,
-				}
-			}
-		}
-		err = fmt.Errorf("unknown tool: %s", name)
-	}
-
-	isError := err != nil
-	text := result
-	if err != nil {
-		text = fmt.Sprintf("Error: %v", err)
-		fmt.Fprintf(os.Stderr, "[Tool %s error]: %v\n", name, err)
-	} else {
-		fmt.Fprintf(os.Stdout, "%s\n", result)
-	}
-
-	return api.ContentBlock{
-		Type: "tool_result",
-		Content: []api.ContentBlock{
-			{Type: "text", Text: text},
-		},
-		IsError: isError,
-	}
 }
 
 // mcpResultText extracts the concatenated text from an MCP tool result.
