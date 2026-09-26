@@ -1278,8 +1278,10 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		decision = runtime.PermDecisionAllowOnce
 	case "a", "A":
 		decision = runtime.PermDecisionAllowAlways
-	case "n", "N":
-		decision = runtime.PermDecisionDeny
+	case "n", "N", "esc":
+		// Deny and end the turn, so the input box is back right away instead
+		// of the model proposing its next call for another prompt.
+		decision = runtime.PermDecisionDenyAndStop
 	default:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
@@ -1473,7 +1475,7 @@ func (m Model) viewPermission() string {
 		inp = inp[:60] + "..."
 	}
 	prompt := fmt.Sprintf("Allow %s: %s?", tool, inp)
-	hint := statusStyle.Render("[y]es-once  [a]lways  [n]o")
+	hint := statusStyle.Render("[y]es-once  [a]lways  [n]o / Esc: stop the turn")
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		headerStyle.Render("Permission Required"),
 		"",

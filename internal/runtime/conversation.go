@@ -185,6 +185,7 @@ func (loop *ConversationLoop) allTools() []api.Tool {
 
 // SendMessage sends a user message and runs the full agentic loop.
 func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) error {
+	loop.closeDanglingToolUses()
 	loop.appendUserMessage(userText)
 
 	// Agentic loop: keep going until stop_reason is "end_turn"
@@ -382,6 +383,7 @@ func (loop *ConversationLoop) runOneTurn(ctx context.Context) (string, error) {
 // TurnEvents to the provided channel. The channel is NOT closed by this function;
 // callers should close it after this returns.
 func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText string, events chan<- TurnEvent) error {
+	loop.closeDanglingToolUses()
 	loop.appendUserMessage(userText)
 
 	var totalInput, totalOutput int
@@ -584,7 +586,26 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		var consecutiveFailures int
 		const maxConsecutiveFailures = 3
 
-		for _, tb := range toolBlocks {
+		// unrunFrom lists the tool calls from index j on, which will not run
+		// once the turn ends early.
+		unrunFrom := func(j int) []string {
+			var ids []string
+			for _, b := range toolBlocks[j:] {
+				ids = append(ids, b.id)
+			}
+			return ids
+		}
+
+		// cancelled ends the turn when its context is cancelled (Esc in the
+		// TUI) with tool calls from index j on not yet run. Their results
+		// still go into the session, alongside the calls that did run, so the
+		// history stays valid for the user's next message.
+		cancelled := func(j int) (string, int, int, error) {
+			loop.appendToolResults(toolResults, unrunFrom(j), toolCancelledNote)
+			return "", 0, 0, ctx.Err()
+		}
+
+		for i, tb := range toolBlocks {
 			var inputMap map[string]any
 			for _, cb := range assistantContent {
 				if cb.Type == "tool_use" && cb.ID == tb.id {
@@ -634,14 +655,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						PermReply: replyCh,
 					}:
 					case <-ctx.Done():
-						return "", 0, 0, ctx.Err()
+						return cancelled(i)
 					}
 
 					var userDecision PermDecision
 					select {
 					case userDecision = <-replyCh:
 					case <-ctx.Done():
-						return "", 0, 0, ctx.Err()
+						return cancelled(i)
 					}
 
 					switch userDecision {
@@ -654,6 +675,19 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						}
 						toolResults = append(toolResults, denied)
 						continue
+					case PermDecisionDenyAndStop:
+						// The user said no and wants the floor back: end the
+						// turn here rather than returning the denial to the
+						// model, which would just propose the next call and
+						// ask again.
+						toolResults = append(toolResults, api.ContentBlock{
+							Type:      "tool_result",
+							ToolUseID: tb.id,
+							Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s. %s", tb.name, toolStoppedNote)}},
+							IsError:   true,
+						})
+						loop.appendToolResults(toolResults, unrunFrom(i+1), toolStoppedNote)
+						return "user_stopped", inputTokens, outputTokens, nil
 					case PermDecisionAllowAlways:
 						loop.PermManager.Remember(tb.name, summary, permissions.DecisionAllow, permissions.ScopeAlways)
 					}
@@ -677,13 +711,13 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					AskUserReply: replyCh,
 				}:
 				case <-ctx.Done():
-					return "", 0, 0, ctx.Err()
+					return cancelled(i)
 				}
 				var answer string
 				select {
 				case answer = <-replyCh:
 				case <-ctx.Done():
-					return "", 0, 0, ctx.Err()
+					return cancelled(i)
 				}
 				toolResults = append(toolResults, api.ContentBlock{
 					Type:      "tool_result",
@@ -696,7 +730,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			select {
 			case events <- TurnEvent{Type: TurnEventToolStart, ToolName: tb.name, ToolInput: summary}:
 			case <-ctx.Done():
-				return "", 0, 0, ctx.Err()
+				return cancelled(i)
 			}
 
 			result := loop.ExecuteToolQuiet(tb.name, inputMap)
@@ -711,7 +745,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			select {
 			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText}:
 			case <-ctx.Done():
-				return "", 0, 0, ctx.Err()
+				return cancelled(i + 1)
 			}
 
 			// Track consecutive tool failures to prevent infinite retry loops.
@@ -724,6 +758,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 
 		// If the model keeps generating invalid tool inputs, stop and report.
 		if consecutiveFailures >= maxConsecutiveFailures {
+			loop.appendToolResults(toolResults, nil, "")
 			events <- TurnEvent{
 				Type: TurnEventError,
 				Err:  fmt.Errorf("model failed %d consecutive times with invalid tool inputs. The model may not be producing valid arguments for the requested tools. Consider trying a different model or rephrasing your request.", maxConsecutiveFailures),
@@ -731,13 +766,54 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			return "", 0, 0, nil
 		}
 
-		loop.Session.Messages = append(loop.Session.Messages, api.Message{
-			Role:    "user",
-			Content: toolResults,
-		})
+		loop.appendToolResults(toolResults, nil, "")
 	}
 
 	return stopReason, inputTokens, outputTokens, nil
+}
+
+const (
+	toolStoppedNote   = "The user stopped this turn; this call was not run. Wait for the user's next message."
+	toolCancelledNote = "The user cancelled this turn before this call ran."
+)
+
+// appendToolResults appends the tool-results message for the current turn:
+// the results gathered so far plus an error result, carrying note, for each
+// tool call in unrun. Every tool_use in the assistant message must be
+// answered, or providers reject the history on the next request.
+func (loop *ConversationLoop) appendToolResults(results []api.ContentBlock, unrun []string, note string) {
+	for _, id := range unrun {
+		results = append(results, api.ContentBlock{
+			Type:      "tool_result",
+			ToolUseID: id,
+			Content:   []api.ContentBlock{{Type: "text", Text: note}},
+			IsError:   true,
+		})
+	}
+	loop.Session.Messages = append(loop.Session.Messages, api.Message{
+		Role:    "user",
+		Content: results,
+	})
+}
+
+// closeDanglingToolUses answers any tool calls the last assistant message
+// left without results - a turn that ended on an error, or a session saved
+// mid-turn - so the next request carries a valid history.
+func (loop *ConversationLoop) closeDanglingToolUses() {
+	n := len(loop.Session.Messages)
+	if n == 0 || loop.Session.Messages[n-1].Role != "assistant" {
+		return
+	}
+
+	var ids []string
+	for _, cb := range loop.Session.Messages[n-1].Content {
+		if cb.Type == "tool_use" {
+			ids = append(ids, cb.ID)
+		}
+	}
+	if len(ids) > 0 {
+		loop.appendToolResults(nil, ids, toolCancelledNote)
+	}
 }
 
 // ExecuteToolQuiet dispatches to the appropriate tool without printing to stdout/stderr.
