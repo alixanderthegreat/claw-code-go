@@ -148,9 +148,9 @@ type Model struct {
 	viewBuf   string // finalized history (all complete turns)
 	streamBuf string // in-progress streaming content
 
-	// what the turn is doing right now, shown with the spinner on the divider
-	// above the input (activity.go): waiting on the model, running a tool,
-	// writing a tool call. activityKey is what the clock is for.
+	// what the turn is doing right now, shown with the spinner on its own row
+	// under the conversation (activity.go): waiting on the model, running a
+	// tool, writing a tool call. activityKey is what the clock is for.
 	activity      string
 	activityKey   string
 	activitySince time.Time
@@ -467,9 +467,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		// The spinner is drawn on the divider (renderDivider), redrawn every frame -
-		// it used to be baked into the conversation's text, which is only rebuilt
-		// when output arrives, so it never moved.
+		// The spinner is drawn on the activity row (renderActivityRow), redrawn
+		// every frame - it used to be baked into the conversation's text, which is
+		// only rebuilt when output arrives, so it never moved.
 		if m.state == stateBusy || m.state == stateLoginOAuth {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -1490,7 +1490,8 @@ func (m Model) View() string {
 	}
 
 	header := m.renderHeader()
-	divider := m.renderDivider()
+	activity := m.renderActivityRow()
+	divider := dividerStyle.Render(strings.Repeat("─", max(m.width, 0)))
 	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
@@ -1498,6 +1499,7 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		m.viewport.View(),
+		activity,
 		divider,
 		inputArea,
 		hint,
@@ -1786,7 +1788,7 @@ func (m Model) resizeViewport() Model {
 // viewportHeight calculates the viewport height from the terminal height.
 // Layout overhead: header(1) + divider(1) + textarea(textareaRows) + hint(1) + status(1).
 func (m Model) viewportHeight() int {
-	overhead := 4 + textareaRows // header + divider + textarea + hint + status
+	overhead := 5 + textareaRows // header + activity + divider + textarea + hint + status
 	h := m.height - overhead
 	if h < 1 {
 		h = 1
