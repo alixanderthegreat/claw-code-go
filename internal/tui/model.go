@@ -91,7 +91,7 @@ type (
 	streamThinkingMsg  struct{ text string }
 	streamToolMsg      struct{ name, input string }
 	streamToolDoneMsg  struct{ name, result string }
-	streamToolDraftMsg struct{ text string }
+	streamToolDraftMsg struct{ key, text string }
 	streamUsageMsg     struct{ inputTokens, outputTokens, cachedTokens int }
 	streamDoneMsg      struct{}
 	streamErrMsg       struct{ err error }
@@ -148,9 +148,11 @@ type Model struct {
 	viewBuf   string // finalized history (all complete turns)
 	streamBuf string // in-progress streaming content
 
-	// what the turn is doing right now, shown with the spinner in the status bar
-	// (activity.go): waiting on the model, running a tool, writing a tool call.
+	// what the turn is doing right now, shown with the spinner on the divider
+	// above the input (activity.go): waiting on the model, running a tool,
+	// writing a tool call. activityKey is what the clock is for.
 	activity      string
+	activityKey   string
 	activitySince time.Time
 	activityTimed bool // show how long it's been going
 
@@ -341,7 +343,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamToolDraftMsg:
 		m = m.closeMarkdown()
-		m = m.setActivity(msg.text, false)
+		m = m.setActivityKeyed(msg.key, msg.text, true)
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
@@ -465,9 +467,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		// The spinner is drawn in the status bar (renderStatusBar), redrawn every
-		// frame - it used to be baked into the conversation's text, which is only
-		// rebuilt when output arrives, so it never moved.
+		// The spinner is drawn on the divider (renderDivider), redrawn every frame -
+		// it used to be baked into the conversation's text, which is only rebuilt
+		// when output arrives, so it never moved.
 		if m.state == stateBusy || m.state == stateLoginOAuth {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -1488,7 +1490,7 @@ func (m Model) View() string {
 	}
 
 	header := m.renderHeader()
-	divider := dividerStyle.Render(strings.Repeat("─", m.width))
+	divider := m.renderDivider()
 	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
@@ -1523,9 +1525,6 @@ func (m Model) renderStatusBar() string {
 		)
 	} else {
 		bar = "Session: " + m.loop.Session.ID
-	}
-	if act := m.activityLine(); act != "" {
-		bar = act + "  │  " + bar
 	}
 	if m.state == stateBusy {
 		bar += "  │  Esc to cancel"
@@ -1746,9 +1745,9 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			case runtime.TurnEventToolStart:
 				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput}
 			case runtime.TurnEventToolDraft:
-				return streamToolDraftMsg{text: draftLine(ev.ToolName, ev.ToolInput, ev.DraftBytes)}
+				return streamToolDraftMsg{key: "draft " + ev.ToolName, text: draftLine(ev.ToolName, ev.ToolInput, ev.DraftBytes)}
 			case runtime.TurnEventToolProgress:
-				return streamToolDraftMsg{text: progressLine(ev.ToolName, ev.ToolInput)}
+				return streamToolDraftMsg{key: "progress " + ev.ToolName, text: progressLine(ev.ToolName, ev.ToolInput)}
 			case runtime.TurnEventToolDone:
 				return streamToolDoneMsg{name: ev.ToolName, result: ev.ToolResult}
 			case runtime.TurnEventUsage:

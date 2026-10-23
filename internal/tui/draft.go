@@ -2,8 +2,9 @@ package tui
 
 import "fmt"
 
-// draftLine is the live line for a tool call still being written: "writing write_file -
-// path: internal/x.go · 3.2 KB".
+// draftLine is the activity for a tool call still being written: "writing write_file -
+// path: internal/x.go · 3.2 KB". The path and size show only if the server streams the arguments;
+// kronk sends them whole at the end, so there it's the name and the time.
 func draftLine(name, hint string, bytes int) string {
 	line := "writing " + name
 	if hint != "" {
