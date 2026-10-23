@@ -65,3 +65,16 @@ func TestToolsFromHistory(t *testing.T) {
 		t.Errorf("history tools = %+v", got)
 	}
 }
+
+// TestFailedToolMarked: a tool that failed shows ✗ live, as it does in a resumed transcript - a
+// timed-out fetch used to show ✓.
+func TestFailedToolMarked(t *testing.T) {
+	m := voiceModel("off")
+	m.width, m.state = 100, stateBusy
+	mm, _ := m.Update(streamToolDoneMsg{name: "web_fetch", result: "Error: web_fetch: context deadline exceeded", failed: true})
+	mm, _ = mm.(Model).Update(streamToolDoneMsg{name: "web_fetch", result: "URL: http://example.com"})
+	plain := ansi.Strip(mm.(Model).streamBuf)
+	if !strings.Contains(plain, "✗ web_fetch → Error") || !strings.Contains(plain, "✓ web_fetch → URL") {
+		t.Errorf("marks:\n%s", plain)
+	}
+}

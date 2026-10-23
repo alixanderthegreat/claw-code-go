@@ -93,7 +93,10 @@ type (
 		name, input string
 		args        map[string]any
 	}
-	streamToolDoneMsg  struct{ name, result string }
+	streamToolDoneMsg  struct {
+		name, result string
+		failed       bool
+	}
 	streamToolDraftMsg struct{ key, text string }
 	streamUsageMsg     struct{ inputTokens, outputTokens, cachedTokens int }
 	streamDoneMsg      struct{}
@@ -375,7 +378,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The results go back to the model: waiting on it again.
 		m = m.setActivity("Thinking…", true)
 		m = m.recordToolDone(msg.name, msg.result)
-		if header, body, ok := consultDisplay(msg.result, m.width); msg.name == "consult" && ok {
+		if header, body, ok := consultDisplay(msg.result, m.width); msg.name == "consult" && ok && !msg.failed {
 			// A consultant's answer is there to be read: all of it, as markdown.
 			m.streamBuf += toolDoneStyle.Render("  ✓ consult → "+header) + "\n" + body + "\n"
 		} else {
@@ -383,7 +386,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.result != "" {
 				suffix = " → " + cut(msg.result, 500)
 			}
-			m.streamBuf += toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
+			style, mark := toolDoneStyle, "✓"
+			if msg.failed { // as the resumed transcript shows it
+				style, mark = toolFailedStyle, "✗"
+			}
+			m.streamBuf += style.Render(fmt.Sprintf("  %s %s%s", mark, msg.name, suffix)) + "\n"
 		}
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
@@ -1789,7 +1796,7 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			case runtime.TurnEventToolProgress:
 				return streamToolDraftMsg{key: "progress " + ev.ToolName, text: progressLine(ev.ToolName, ev.ToolInput)}
 			case runtime.TurnEventToolDone:
-				return streamToolDoneMsg{name: ev.ToolName, result: ev.ToolResult}
+				return streamToolDoneMsg{name: ev.ToolName, result: ev.ToolResult, failed: ev.ToolFailed}
 			case runtime.TurnEventUsage:
 				return streamUsageMsg{inputTokens: ev.InputTokens, outputTokens: ev.OutputTokens, cachedTokens: ev.CachedTokens}
 			case runtime.TurnEventDone:

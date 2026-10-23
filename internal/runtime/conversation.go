@@ -640,7 +640,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			}
 
 			select {
-			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText}:
+			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText, ToolFailed: result.IsError}:
 			case <-ctx.Done():
 				return cancelled(i + 1)
 			}

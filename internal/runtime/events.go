@@ -35,6 +35,7 @@ type TurnEvent struct {
 	ToolInput    string            // TurnEventToolStart/PermissionAsk: brief input summary
 	ToolArgs     map[string]any    // TurnEventToolStart: the call's whole input
 	ToolResult   string            // TurnEventToolDone: output excerpt
+	ToolFailed   bool              // TurnEventToolDone: the result is an error
 	InputTokens  int               // TurnEventUsage/Done: input token count
 	OutputTokens int               // TurnEventUsage/Done: output token count
 	CachedTokens int               // TurnEventUsage: how many input tokens came from the prompt cache
