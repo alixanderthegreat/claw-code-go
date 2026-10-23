@@ -5,14 +5,16 @@ import (
 	"claw-code-go/internal/api"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
-const (
-	bashTimeout   = 30 * time.Second
-	maxOutputSize = 10000
-)
+const maxOutputSize = 10000
+
+// bashTimeout bounds one command; a var so a test can shorten it.
+var bashTimeout = 30 * time.Second
 
 // BashTool returns the tool definition for the bash tool.
 func BashTool() api.Tool {
@@ -43,6 +45,14 @@ func ExecuteBash(input map[string]any) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	// Nothing may ask for input: the TUI owns the terminal. A command that prompts (an ssh host
+	// key or password, sudo, a git login) took the terminal over and hung - so it runs detached
+	// from it, with git's and ssh's prompts off, and a prompt fails at once with a clear error.
+	cmd.Env = noPromptEnv(os.Environ())
+	detach(cmd)
+	// On timeout, the whole group goes, and Run stops waiting for pipes a child still holds - the
+	// 30 s limit used to kill bash alone while an ssh it started kept the output open forever.
+	cmd.WaitDelay = 2 * time.Second
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -67,4 +77,21 @@ func ExecuteBash(input map[string]any) (string, error) {
 	}
 
 	return output, nil
+}
+
+// noPromptEnv is env with git's and ssh's interactive prompts turned off, keeping a GIT_SSH_COMMAND
+// the user already set.
+func noPromptEnv(env []string) []string {
+	out := append([]string(nil), env...)
+	hasSSHCommand := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_SSH_COMMAND=") {
+			hasSSHCommand = true
+		}
+	}
+	out = append(out, "GIT_TERMINAL_PROMPT=0", "SSH_ASKPASS_REQUIRE=never")
+	if !hasSSHCommand {
+		out = append(out, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	}
+	return out
 }
