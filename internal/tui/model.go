@@ -1684,11 +1684,9 @@ func (m Model) viewHelp() string {
 
 func (m Model) viewPermission() string {
 	tool := userLabelStyle.Render(m.permToolName)
-	inp := m.permToolInput
-	if len(inp) > 60 {
-		inp = inp[:60] + "..."
-	}
-	prompt := fmt.Sprintf("Allow %s: %s?", tool, inp)
+	// The whole input, wrapped by the box: what's being allowed - a bash command above all -
+	// has to be readable to the end, and it used to stop at 60 characters.
+	prompt := fmt.Sprintf("Allow %s: %s?", tool, m.permToolInput)
 	hint := statusStyle.Render("[y]es-once  [a]lways  [n]o / Esc: stop the turn")
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		headerStyle.Render("Permission Required"),
@@ -1701,7 +1699,11 @@ func (m Model) viewPermission() string {
 }
 
 func (m Model) viewPermissionOverlay() string {
-	return lipgloss.JoinVertical(lipgloss.Top, m.viewport.View(), m.viewPermission())
+	// The box is as tall as what's being allowed; the conversation gets what's left of the screen.
+	box := m.viewPermission()
+	vp := m.viewport
+	vp.Height = max(m.height-lipgloss.Height(box), 1)
+	return lipgloss.JoinVertical(lipgloss.Top, vp.View(), box)
 }
 
 // viewLoginProvider renders the provider selection screen.

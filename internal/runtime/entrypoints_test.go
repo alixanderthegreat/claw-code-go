@@ -327,3 +327,41 @@ func (c *toolFirstSummaryClient) StreamResponse(_ context.Context, req api.Creat
 	ch <- api.StreamEvent{Type: api.EventMessageStop}
 	return ch, nil
 }
+
+// TestFailedCommandKeepsItsOutput: a failed command's result is what it printed and then the error -
+// "exit status 128" alone hid the "fatal: not a git repository" that said what was wrong.
+func TestFailedCommandKeepsItsOutput(t *testing.T) {
+	client := &scriptedClient{tool: "bash", input: map[string]any{"command": "echo 'fatal: not a git repository'; exit 128"}}
+	if err := newScriptedLoop(client, nil).SendMessage(context.Background(), "push"); err != nil {
+		t.Fatal(err)
+	}
+	r := client.toolResult(t)
+	text := r.Content[0].Text
+	if !r.IsError || !strings.HasPrefix(text, "fatal: not a git repository") || !strings.Contains(text, "exit status 128") {
+		t.Errorf("result = %q", text)
+	}
+}
+
+// TestAskUserNeedsNoPermission: asking the user isn't something to ask them permission for - even
+// in default mode the question goes straight to them.
+func TestAskUserNeedsNoPermission(t *testing.T) {
+	client := &scriptedClient{tool: "ask_user", input: map[string]any{"question": "HTTP or SSH?"}}
+	loop := newScriptedLoop(client, nil)
+	loop.PermManager = permissions.NewManager(permissions.ModeDefault, nil)
+	events := make(chan TurnEvent, 16)
+	go func() {
+		for ev := range events {
+			switch ev.Type {
+			case TurnEventPermissionAsk:
+				t.Errorf("asked permission to ask the user")
+				ev.PermReply <- PermDecisionAllowOnce
+			case TurnEventAskUser:
+				ev.AskUserReply <- "HTTP"
+			}
+		}
+	}()
+	if err := loop.SendMessageStreaming(context.Background(), "push", events); err != nil {
+		t.Fatal(err)
+	}
+	close(events)
+}

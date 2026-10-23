@@ -507,7 +507,9 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			summary := SummarizeToolInput(inputMap)
 
 			// --- Permission check (Phase 5) ---
-			if loop.PermManager != nil {
+			// Not for ask_user: all it does is ask the user, and their answer is the consent -
+			// asking permission to ask hid the question in a box that cut it short.
+			if loop.PermManager != nil && tb.name != "ask_user" {
 				decision := loop.PermManager.Check(tb.name, summary)
 
 				// Plan mode: describe without executing.
@@ -842,7 +844,12 @@ func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) ap
 	isError := err != nil
 	text := result
 	if err != nil {
+		// What the command printed comes first: "exit status 128" alone left the model guessing
+		// at a "fatal: not a git repository" it never saw.
 		text = fmt.Sprintf("Error: %v", err)
+		if out := strings.TrimRight(result, "\n"); out != "" {
+			text = out + "\n" + text
+		}
 	}
 
 	return api.ContentBlock{
