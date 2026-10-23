@@ -42,6 +42,9 @@ type ConversationLoop struct {
 	// modification is always grounded in real, current content rather than
 	// a guess — mirrors Claude Code's own read-before-edit rule.
 	ReadFiles map[string]bool
+
+	// shellNotes are "!" commands the user ran since their last message (shell_notes.go).
+	shellNotes []string
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -126,6 +129,10 @@ func (loop *ConversationLoop) SystemPrompt() string {
 // something new, and the environment really may have changed since the last turn.
 func (loop *ConversationLoop) appendUserMessage(userText string) {
 	text := userText
+	// Commands the user ran with "!" since their last message, ahead of what they now say.
+	if notes := loop.takeShellNotes(); notes != "" {
+		text = notes + "\n\n" + text
+	}
 	if loop.CtxAssembler != nil {
 		if projCtx := loop.CtxAssembler.Assemble(); projCtx != "" {
 			text = projCtx + "\n\n" + userText
@@ -936,6 +943,7 @@ func formatToolSchemaHint(name string, tools []api.Tool) string {
 func (loop *ConversationLoop) ClearSession() {
 	loop.Session.Messages = []api.Message{}
 	loop.Session.ReasoningMode = ""
+	loop.shellNotes = nil
 }
 
 // ManualCompact runs the same compaction runOneTurnStreaming triggers automatically once

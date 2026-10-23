@@ -474,6 +474,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shellDoneMsg:
 		m = m.clearActivity()
+		m.loop.NoteShellCommand(msg.command, msg.output, msg.err) // for the next message
 		out := strings.TrimRight(msg.output, "\n")
 		if out != "" {
 			m.viewBuf += out + "\n"
