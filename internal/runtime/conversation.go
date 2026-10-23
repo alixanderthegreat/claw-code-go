@@ -615,7 +615,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			}
 
 			select {
-			case events <- TurnEvent{Type: TurnEventToolStart, ToolName: tb.name, ToolInput: summary}:
+			case events <- TurnEvent{Type: TurnEventToolStart, ToolName: tb.name, ToolInput: summary, ToolArgs: inputMap}:
 			case <-ctx.Done():
 				return cancelled(i)
 			}

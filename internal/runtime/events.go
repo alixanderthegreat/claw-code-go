@@ -33,6 +33,7 @@ type TurnEvent struct {
 	Text         string            // TurnEventTextDelta: the chunk
 	ToolName     string            // TurnEventToolStart/Done/PermissionAsk: tool name
 	ToolInput    string            // TurnEventToolStart/PermissionAsk: brief input summary
+	ToolArgs     map[string]any    // TurnEventToolStart: the call's whole input
 	ToolResult   string            // TurnEventToolDone: output excerpt
 	InputTokens  int               // TurnEventUsage/Done: input token count
 	OutputTokens int               // TurnEventUsage/Done: output token count

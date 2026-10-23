@@ -87,9 +87,12 @@ const (
 
 // Bubble Tea messages for async streaming events.
 type (
-	streamDeltaMsg     struct{ text string }
-	streamThinkingMsg  struct{ text string }
-	streamToolMsg      struct{ name, input string }
+	streamDeltaMsg    struct{ text string }
+	streamThinkingMsg struct{ text string }
+	streamToolMsg     struct {
+		name, input string
+		args        map[string]any
+	}
 	streamToolDoneMsg  struct{ name, result string }
 	streamToolDraftMsg struct{ key, text string }
 	streamUsageMsg     struct{ inputTokens, outputTokens, cachedTokens int }
@@ -207,6 +210,11 @@ type Model struct {
 	// speech in and out (voice.go)
 	voice *voiceState
 
+	// every tool call in full, and the Ctrl+O view of them (details.go)
+	tools    []toolEntry
+	details  bool
+	detailVP viewport.Model
+
 	// queued is a message typed and sent (Enter) while a turn was running; it's
 	// submitted as soon as the TUI is back to waiting for input.
 	queued string
@@ -249,6 +257,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		cfg:      cfg,
 		viewBuf:  viewBuf,
 		voice:    newVoiceState(cfg),
+		tools:    toolsFromHistory(loop.Session.Messages),
 	}
 }
 
@@ -288,6 +297,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m = m.resizeViewport()
 		}
+		if m.details {
+			m = m.openDetails()
+		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -298,10 +310,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// mouse events bypass that entirely; viewport.Model already handles wheel scroll
 		// natively (MouseWheelEnabled defaults to true), this just forwards to it.
 		var cmd tea.Cmd
+		if m.details {
+			m.detailVP, cmd = m.detailVP.Update(msg)
+			return m, cmd
+		}
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
 	case tea.KeyMsg:
+		if m.details {
+			return m.handleDetailsKey(msg)
+		}
 		return m.handleKey(msg)
 
 	case streamDeltaMsg:
@@ -335,7 +354,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 		}
-		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, msg.input)) + "\n"
+		m = m.recordToolStart(msg.name, msg.args)
+		input := msg.input
+		if len(input) > 300 { // SummarizeToolInput cut it
+			input += moreMark
+		}
+		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, input)) + "\n"
 		m.streamBuf += line
 		m.voice.reply = "" // only what comes after the last tool call is the answer
 		m = m.refreshViewport()
@@ -350,12 +374,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamToolDoneMsg:
 		// The results go back to the model: waiting on it again.
 		m = m.setActivity("Thinking…", true)
-		suffix := ""
-		if msg.result != "" {
-			suffix = " → " + truncate(msg.result, 500)
+		m = m.recordToolDone(msg.name, msg.result)
+		if header, body, ok := consultDisplay(msg.result, m.width); msg.name == "consult" && ok {
+			// A consultant's answer is there to be read: all of it, as markdown.
+			m.streamBuf += toolDoneStyle.Render("  ✓ consult → "+header) + "\n" + body + "\n"
+		} else {
+			suffix := ""
+			if msg.result != "" {
+				suffix = " → " + cut(msg.result, 500)
+			}
+			m.streamBuf += toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
 		}
-		line := toolDoneStyle.Render(fmt.Sprintf("  ✓ %s%s", msg.name, suffix)) + "\n"
-		m.streamBuf += line
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
@@ -487,6 +516,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// (including mid-turn/busy), so it never appears to "stop working" once
 	// a round is in flight. Login/API-key text entry is the only state where
 	// the key might land in a text field instead, so it's excluded there.
+	if msg.Type == tea.KeyCtrlO && (m.state == stateInput || m.state == stateBusy) {
+		m = m.openDetails()
+		return m, nil
+	}
+
 	if msg.Type == tea.KeyShiftTab && m.state != stateLoginAPIKey {
 		if m.loop.PermManager != nil {
 			m.loop.PermManager.Mode = nextPermMode(m.loop.PermManager.Mode)
@@ -1469,6 +1503,9 @@ func (m Model) View() string {
 	if !m.ready {
 		return "Initializing…\n"
 	}
+	if m.details {
+		return m.viewDetails()
+	}
 
 	switch m.state {
 	case statePicker:
@@ -1492,7 +1529,7 @@ func (m Model) View() string {
 	header := m.renderHeader()
 	activity := m.renderActivityRow()
 	divider := dividerStyle.Render(strings.Repeat("─", max(m.width, 0)))
-	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
+	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
@@ -1625,6 +1662,7 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("Ctrl+N")+"         Insert newline (multi-line input)",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Navigate input history (single-line mode)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
+		"  "+userLabelStyle.Render("Ctrl+O")+"         Every tool call in full: inputs and results (Esc closes)",
 		"  "+userLabelStyle.Render("Ctrl+R")+"         Start/stop recording - the transcript lands in the input",
 		"  "+userLabelStyle.Render("Esc")+"            Stop speech",
 		"  "+userLabelStyle.Render("Shift+Tab")+"      Cycle permission mode (default → accept-edits → bypass → plan)",
@@ -1745,7 +1783,7 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			case runtime.TurnEventThinkingDelta:
 				return streamThinkingMsg{text: ev.Text}
 			case runtime.TurnEventToolStart:
-				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput}
+				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput, args: ev.ToolArgs}
 			case runtime.TurnEventToolDraft:
 				return streamToolDraftMsg{key: "draft " + ev.ToolName, text: draftLine(ev.ToolName, ev.ToolInput, ev.DraftBytes)}
 			case runtime.TurnEventToolProgress:
