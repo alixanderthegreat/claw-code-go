@@ -11,7 +11,7 @@ import (
 func FileEditTool() api.Tool {
 	return api.Tool{
 		Name:        "file_edit",
-		Description: "Edit a file by replacing an exact string with new content. You must read the file with read_file in this session before editing it, so the edit is grounded in its real, current content. Errors if old_string is not found or appears more than once.",
+		Description: "The way to change an existing file: replace an exact string in it with new content, sending only the part that changes. Copy old_string exactly from read_file's output, whitespace and indentation included, with enough surrounding lines to match just once - or set replace_all to change every occurrence. Several changes to one file are several file_edit calls; make them together in one response. You must read the file with read_file in this session before editing it, so the edit is grounded in its real, current content.",
 		InputSchema: api.InputSchema{
 			Type: "object",
 			Properties: map[string]api.Property{
@@ -26,6 +26,10 @@ func FileEditTool() api.Tool {
 				"new_string": {
 					Type:        "string",
 					Description: "Replacement string",
+				},
+				"replace_all": {
+					Type:        "boolean",
+					Description: "Replace every occurrence of old_string instead of requiring exactly one (default false)",
 				},
 			},
 			Required: []string{"file_path", "old_string", "new_string"},
@@ -65,18 +69,30 @@ func ExecuteFileEdit(input map[string]any) (string, error) {
 	}
 
 	content := string(data)
+	replaceAll, _ := input["replace_all"].(bool)
 	count := strings.Count(content, oldString)
 	if count == 0 {
-		return "", fmt.Errorf("file_edit: old_string not found in %s", filePath)
+		hint := "copy it exactly from read_file's output, whitespace and indentation included"
+		if strings.Contains(content, strings.TrimSpace(oldString)) {
+			hint = "it does appear with different leading/trailing whitespace - copy the exact indentation and line breaks"
+		}
+		return "", fmt.Errorf("file_edit: old_string not found in %s: %s; if the file changed since you read it, read_file it again", filePath, hint)
 	}
-	if count > 1 {
-		return "", fmt.Errorf("file_edit: old_string matches %d locations in %s (must be unique)", count, filePath)
+	if count > 1 && !replaceAll {
+		return "", fmt.Errorf("file_edit: old_string matches %d locations in %s - add surrounding lines to make it unique, or set replace_all to change all %d", count, filePath, count)
 	}
 
-	updated := strings.Replace(content, oldString, newString, 1)
+	n := 1
+	if replaceAll {
+		n = -1
+	}
+	updated := strings.Replace(content, oldString, newString, n)
 	if err := os.WriteFile(filePath, []byte(updated), 0o644); err != nil {
 		return "", fmt.Errorf("file_edit: write: %w", err)
 	}
 
+	if replaceAll && count > 1 {
+		return fmt.Sprintf("Successfully edited %s (%d occurrences)", filePath, count), nil
+	}
 	return fmt.Sprintf("Successfully edited %s", filePath), nil
 }

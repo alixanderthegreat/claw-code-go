@@ -75,6 +75,11 @@ type Config struct {
 	// Compaction is triggered as a fraction of this value, NOT of MaxTokens
 	// (MaxTokens is only the per-request output cap sent to the API).
 	ContextWindow int
+
+	// VoiceMode is when the TUI speaks replies: "auto", "on" or "off"
+	// (internal/voice). STTModel is the transcription model it asks for.
+	VoiceMode string
+	STTModel  string
 }
 
 // LoadConfig reads configuration from layered settings files, the global
@@ -113,6 +118,8 @@ func LoadConfig() *Config {
 		if gc.ContextWindow != 0 {
 			cfg.ContextWindow = gc.ContextWindow
 		}
+		cfg.VoiceMode = gc.VoiceMode
+		cfg.STTModel = gc.STTModel
 	}
 
 	// Environment variables override global config.

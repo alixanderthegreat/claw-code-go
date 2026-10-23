@@ -13,6 +13,8 @@ const (
 	TurnEventError                              // error occurred
 	TurnEventPermissionAsk                      // permission check required — send reply on PermReply
 	TurnEventAskUser                            // agent needs user input — send reply on AskUserReply
+	TurnEventToolDraft                          // the model is still writing a tool call's arguments
+	TurnEventToolProgress                       // a long-running tool's progress (consult): ToolInput says where it is
 )
 
 // PermDecision is the user's response to a TurnEventPermissionAsk event.
@@ -34,6 +36,8 @@ type TurnEvent struct {
 	ToolResult   string            // TurnEventToolDone: output excerpt
 	InputTokens  int               // TurnEventUsage/Done: input token count
 	OutputTokens int               // TurnEventUsage/Done: output token count
+	CachedTokens int               // TurnEventUsage: how many input tokens came from the prompt cache
+	DraftBytes   int               // TurnEventToolDraft: how much of the call's arguments has arrived
 	Err          error             // TurnEventError: the error
 	PermReply    chan PermDecision // TurnEventPermissionAsk: caller sends decision here
 	AskUserReply chan string       // TurnEventAskUser: caller sends user's answer here

@@ -16,7 +16,13 @@ import (
 	"unicode/utf8"
 )
 
-const systemPromptBase = `You are Gordi Code, an AI assistant for software engineering tasks. You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks.`
+// systemPromptIdentity is who answers - left out while a reasoning mode with its own persona or
+// framework is on (reasoning.go), which it would otherwise override.
+const systemPromptIdentity = `You are Gordi Code, an AI assistant for software engineering tasks.`
+
+const systemPromptBase = `You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks. Change existing files with file_edit, which sends only what changes; write_file is for new files or replacing a file completely.
+
+When several tool calls don't depend on each other's results - reading a few files, running separate searches - make them together in one response instead of one per turn. Each turn costs a full round-trip to the model.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
@@ -125,6 +131,11 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 			text = projCtx + "\n\n" + userText
 		}
 	}
+	// The session's reasoning mode, if any, leads the message: the model's template reads
+	// it from user messages only (reasoning.go).
+	if tag := loop.reasoningTag(); tag != "" {
+		text = tag + " " + text
+	}
 	loop.Session.Messages = append(loop.Session.Messages, api.Message{
 		Role: "user",
 		Content: []api.ContentBlock{
@@ -147,12 +158,16 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 // is correct rather than just "somewhere else".
 func (loop *ConversationLoop) systemPrompt() string {
 	var parts []string
-	parts = append(parts, systemPromptBase)
-
-	// Inject compaction summary when the session has one (Phase 6).
-	if loop.Session != nil && loop.Session.CompactionSummary != "" {
-		parts = append(parts, FormatCompactSummary(loop.Session.CompactionSummary))
+	if !loop.modeReplacesIdentity() {
+		parts = append(parts, systemPromptIdentity+" "+systemPromptBase)
+	} else {
+		parts = append(parts, systemPromptBase)
 	}
+
+	// No compaction summary here: it changed with every compaction, so the
+	// system prompt and tools - the one prefix every request shares - had to be
+	// prefilled again after each one. It reaches the model once, in the
+	// continuation message at the head of the retained history.
 
 	// Append MCP tool list if any servers are connected.
 	if loop.MCPRegistry != nil {
@@ -169,17 +184,22 @@ func (loop *ConversationLoop) systemPrompt() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// allTools returns built-in tools merged with any MCP tools.
+// allTools returns built-in tools merged with any MCP tools, and consult when
+// the model has modes to consult (consult.go).
 func (loop *ConversationLoop) allTools() []api.Tool {
+	tools := loop.Tools
+	if SupportsReasoningTags(loop.Config.Model) {
+		tools = append(append([]api.Tool(nil), tools...), ConsultTool())
+	}
 	if loop.MCPRegistry == nil {
-		return loop.Tools
+		return tools
 	}
 	mcpAPITools := loop.MCPRegistry.AllAPITools()
 	if len(mcpAPITools) == 0 {
-		return loop.Tools
+		return tools
 	}
-	combined := make([]api.Tool, 0, len(loop.Tools)+len(mcpAPITools))
-	combined = append(combined, loop.Tools...)
+	combined := make([]api.Tool, 0, len(tools)+len(mcpAPITools))
+	combined = append(combined, tools...)
 	combined = append(combined, mcpAPITools...)
 	return combined
 }
@@ -232,7 +252,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	loop.closeDanglingToolUses()
 	loop.appendUserMessage(userText)
 
-	var totalInput, totalOutput int
+	var totalInput, totalOutput, totalCached int
 	// invalidStreak counts invalid tool calls in a row across the whole
 	// exchange: a model stuck on a bad call usually makes one per response,
 	// so a count that restarts every response would never reach the limit.
@@ -244,7 +264,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 		// single exchange can run many tool-use round-trips and each one grows
 		// the message history that gets resent on the next turn.
 		if ShouldCompact(loop.Compaction.LastInputTokens, loop.Session.Messages, loop.Config) {
-			summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
+			summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session, loop.systemPrompt(), loop.allTools())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
 			} else {
@@ -256,7 +276,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			}
 		}
 
-		stopReason, inTok, outTok, err := loop.runOneTurnStreaming(ctx, events, &invalidStreak)
+		stopReason, inTok, outTok, cachedTok, err := loop.runOneTurnStreaming(ctx, events, &invalidStreak)
 		if err != nil {
 			// A failed request reports no usage, so the last count is from a
 			// smaller, earlier history - often the very request that then
@@ -267,13 +287,15 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			return err
 		}
 		totalOutput += outTok
-		// LastInputTokens tracks the most recent turn's reported context size,
-		// not a running sum — each turn resends the whole history, so summing
-		// across turns would massively overstate how full the context window
-		// actually is and trigger compaction far too eagerly.
+		// Two different numbers: LastInputTokens is how full the context is,
+		// the latest request's prompt and never a sum, since every request
+		// resends the whole history. totalInput is what the exchange actually
+		// fed the model, every tool round-trip's prompt added up; keeping only
+		// the last one hid all but one request of a tool-heavy exchange.
 		if inTok > 0 {
 			loop.Compaction.LastInputTokens = inTok
-			totalInput = inTok
+			totalInput += inTok
+			totalCached += cachedTok
 		}
 
 		if stopReason != "tool_use" {
@@ -287,13 +309,14 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 
 	// Update the usage tracker (Phase 13).
 	if loop.Usage != nil {
-		loop.Usage.Add(totalInput, totalOutput, 0, 0)
+		loop.Usage.Add(totalInput, totalOutput, 0, totalCached)
 	}
 
 	events <- TurnEvent{
 		Type:         TurnEventUsage,
 		InputTokens:  totalInput,
 		OutputTokens: totalOutput,
+		CachedTokens: totalCached,
 	}
 	events <- TurnEvent{Type: TurnEventDone}
 	return nil
@@ -301,8 +324,8 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 
 // runOneTurnStreaming streams one API turn and sends TurnEvents, carrying the
 // exchange's run of invalid tool calls in invalidStreak.
-// Returns stop_reason, inputTokens, outputTokens, error.
-func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events chan<- TurnEvent, invalidStreak *int) (string, int, int, error) {
+// Returns stop_reason, inputTokens, outputTokens, cachedTokens, error.
+func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events chan<- TurnEvent, invalidStreak *int) (string, int, int, int, error) {
 	req := api.CreateMessageRequest{
 		Model:     loop.Config.Model,
 		MaxTokens: loop.Config.MaxTokens,
@@ -314,7 +337,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 
 	ch, err := loop.Client.StreamResponse(ctx, req)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("stream response: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("stream response: %w", err)
 	}
 
 	type toolBlock struct {
@@ -332,15 +355,18 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		blockTypeMap   = make(map[int]string)
 		inputTokens    int
 		outputTokens   int
+		cachedTokens   int
+		draft          toolDraftNotifier
 	)
 
 	for event := range ch {
 		switch event.Type {
 		case api.EventError:
-			return "", 0, 0, fmt.Errorf("stream error: %s", event.ErrorMessage)
+			return "", 0, 0, 0, fmt.Errorf("stream error: %s", event.ErrorMessage)
 
 		case api.EventMessageStart:
 			inputTokens = event.InputTokens
+			cachedTokens = event.CachedTokens
 
 		case api.EventContentBlockStart:
 			blockTypeMap[event.Index] = event.ContentBlock.Type
@@ -350,6 +376,9 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					name: event.ContentBlock.Name,
 				}
 				toolOrder = append(toolOrder, event.Index)
+				if !draft.send(ctx, events, event.ContentBlock.Name, "", true) {
+					return "", 0, 0, 0, ctx.Err()
+				}
 			}
 
 		case api.EventContentBlockDelta:
@@ -359,7 +388,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				select {
 				case events <- TurnEvent{Type: TurnEventTextDelta, Text: event.Delta.Text}:
 				case <-ctx.Done():
-					return "", 0, 0, ctx.Err()
+					return "", 0, 0, 0, ctx.Err()
 				}
 			case "thinking_delta":
 				// Reasoning is shown live but not accumulated into the
@@ -369,11 +398,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				select {
 				case events <- TurnEvent{Type: TurnEventThinkingDelta, Text: event.Delta.Text}:
 				case <-ctx.Done():
-					return "", 0, 0, ctx.Err()
+					return "", 0, 0, 0, ctx.Err()
 				}
 			case "input_json_delta":
 				if tb, ok := toolBlocksByIx[event.Index]; ok {
 					tb.inputBuffer += event.Delta.PartialJSON
+					if !draft.send(ctx, events, tb.name, tb.inputBuffer, false) {
+						return "", 0, 0, 0, ctx.Err()
+					}
 				}
 			}
 
@@ -389,7 +421,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				select {
 				case events <- TurnEvent{Type: TurnEventThinkingDelta, Text: "\n\n"}:
 				case <-ctx.Done():
-					return "", 0, 0, ctx.Err()
+					return "", 0, 0, 0, ctx.Err()
 				}
 			}
 
@@ -455,9 +487,9 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		// TUI) with tool calls from index j on not yet run. Their results
 		// still go into the session, alongside the calls that did run, so the
 		// history stays valid for the user's next message.
-		cancelled := func(j int) (string, int, int, error) {
+		cancelled := func(j int) (string, int, int, int, error) {
 			loop.appendToolResults(toolResults, unrunFrom(j), toolCancelledNote)
-			return "", 0, 0, ctx.Err()
+			return "", 0, 0, 0, ctx.Err()
 		}
 
 		for i, tb := range toolBlocks {
@@ -542,7 +574,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 							IsError:   true,
 						})
 						loop.appendToolResults(toolResults, unrunFrom(i+1), toolStoppedNote)
-						return "user_stopped", inputTokens, outputTokens, nil
+						return "user_stopped", inputTokens, outputTokens, cachedTokens, nil
 					case PermDecisionAllowAlways:
 						loop.PermManager.Remember(tb.name, summary, permissions.DecisionAllow, permissions.ScopeAlways)
 					}
@@ -588,7 +620,17 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				return cancelled(i)
 			}
 
-			result := loop.ExecuteTool(tb.name, inputMap)
+			var result api.ContentBlock
+			if tb.name == consultToolName {
+				// A consult runs for minutes: it needs the turn's context, so Esc stops it,
+				// and the events, to show how far it's got.
+				result = capToolResult(loop.consult(ctx, events, inputMap), loop.maxToolResultChars())
+				if ctx.Err() != nil {
+					return cancelled(i)
+				}
+			} else {
+				result = loop.ExecuteTool(tb.name, inputMap)
+			}
 			result.ToolUseID = tb.id
 			toolResults = append(toolResults, result)
 
@@ -618,13 +660,13 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				Type: TurnEventError,
 				Err:  fmt.Errorf("model failed %d consecutive times with invalid tool inputs. The model may not be producing valid arguments for the requested tools. Consider trying a different model or rephrasing your request.", maxConsecutiveFailures),
 			}
-			return "", 0, 0, nil
+			return "", 0, 0, 0, nil
 		}
 
 		loop.appendToolResults(toolResults, nil, "")
 	}
 
-	return stopReason, inputTokens, outputTokens, nil
+	return stopReason, inputTokens, outputTokens, cachedTokens, nil
 }
 
 const (
@@ -882,9 +924,11 @@ func formatToolSchemaHint(name string, tools []api.Tool) string {
 	return ""
 }
 
-// ClearSession resets the conversation history in the current session.
+// ClearSession resets the conversation history in the current session, and
+// its reasoning mode with it: a new chat starts on the model's default.
 func (loop *ConversationLoop) ClearSession() {
 	loop.Session.Messages = []api.Message{}
+	loop.Session.ReasoningMode = ""
 }
 
 // ManualCompact runs the same compaction runOneTurnStreaming triggers automatically once
@@ -896,7 +940,7 @@ func (loop *ConversationLoop) ManualCompact(ctx context.Context) (string, error)
 	if len(loop.Session.Messages) == 0 {
 		return "", fmt.Errorf("nothing to compact: no messages in this session yet")
 	}
-	summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session)
+	summary, err := CompactSession(ctx, loop.Client, loop.Config, loop.Session, loop.systemPrompt(), loop.allTools())
 	if err != nil {
 		return "", err
 	}
@@ -917,6 +961,7 @@ func (loop *ConversationLoop) SaveCurrentSession() error {
 	if loop.Usage != nil {
 		loop.Session.TotalInputTokens = loop.Usage.TotalInput
 		loop.Session.TotalOutputTokens = loop.Usage.TotalOutput
+		loop.Session.TotalCachedTokens = loop.Usage.CacheRead
 		loop.Session.TotalTurns = loop.Usage.Turns
 	}
 	return SaveSession(loop.Config.SessionDir, loop.Session)
@@ -933,6 +978,7 @@ func (loop *ConversationLoop) LoadNamedSession(id string) error {
 	if loop.Usage != nil && sess.TotalTurns > 0 {
 		loop.Usage.TotalInput = sess.TotalInputTokens
 		loop.Usage.TotalOutput = sess.TotalOutputTokens
+		loop.Usage.CacheRead = sess.TotalCachedTokens
 		loop.Usage.Turns = sess.TotalTurns
 	}
 	return nil

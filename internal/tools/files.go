@@ -51,7 +51,7 @@ func ReadFileTool() api.Tool {
 func WriteFileTool() api.Tool {
 	return api.Tool{
 		Name:        "write_file",
-		Description: "Write content to a file. Creates the file if it doesn't exist. To overwrite an existing file, you must have read it first with read_file in this session, so the change is grounded in its real content rather than a guess.",
+		Description: "Create a new file, or replace a file's entire contents. To change part of an existing file, use file_edit instead: it sends only the changed text, while write_file has to send the whole file again, which is far slower. To overwrite an existing file you must have read it first with read_file in this session, so the change is grounded in its real content rather than a guess.",
 		InputSchema: api.InputSchema{
 			Type: "object",
 			Properties: map[string]api.Property{
@@ -206,9 +206,17 @@ func ExecuteWriteFile(input map[string]any) (string, error) {
 		}
 	}
 
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write_file: %w", err)
 	}
 
+	if existed {
+		// Done as asked - the file is already generated, refusing would waste it - but say so: the
+		// model reached for write_file over file_edit for changes to existing files, and every one
+		// resent the whole file.
+		return fmt.Sprintf("Successfully replaced %s with %d bytes. For a change to part of an existing file, use file_edit next time: it sends only the changed text.", path, len(content)), nil
+	}
 	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path), nil
 }

@@ -138,6 +138,9 @@ type StreamEvent struct {
 
 	// message_start input token count (parsed from "message.usage.input_tokens")
 	InputTokens int `json:"-"`
+	// message_start: how many of InputTokens the server served from its prompt
+	// cache, when it says (OpenAI-compatible prompt_tokens_details.cached_tokens)
+	CachedTokens int `json:"-"`
 
 	// Error
 	ErrorMessage string `json:"-"`

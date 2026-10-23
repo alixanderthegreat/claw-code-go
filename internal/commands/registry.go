@@ -24,6 +24,7 @@ func NewRegistry() *Registry {
 	}
 
 	r.registerBuiltins()
+	RegisterReasoningCommand(r)
 	return r
 }
 

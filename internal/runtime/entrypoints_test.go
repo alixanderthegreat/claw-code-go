@@ -41,6 +41,14 @@ func (c *scriptedClient) StreamResponse(_ context.Context, req api.CreateMessage
 	defer close(ch)
 
 	last := req.Messages[len(req.Messages)-1]
+	if isSummaryRequest(req) {
+		ch <- api.StreamEvent{Type: api.EventContentBlockStart, ContentBlock: api.ContentBlockInfo{Type: "text"}}
+		ch <- api.StreamEvent{Type: api.EventContentBlockDelta, Delta: api.Delta{Type: "text_delta", Text: "summary"}}
+		ch <- api.StreamEvent{Type: api.EventContentBlockStop}
+		ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "end_turn"}
+		ch <- api.StreamEvent{Type: api.EventMessageStop}
+		return ch, nil
+	}
 	calling := last.Content[0].Type != "tool_result" || c.repeat
 	if calling && len(c.requests) <= maxScriptedRequests {
 		raw, _ := json.Marshal(c.input)
@@ -57,6 +65,13 @@ func (c *scriptedClient) StreamResponse(_ context.Context, req api.CreateMessage
 	}
 	ch <- api.StreamEvent{Type: api.EventMessageStop}
 	return ch, nil
+}
+
+// isSummaryRequest reports whether req is compaction asking for a summary, in
+// place or as a transcript.
+func isSummaryRequest(req api.CreateMessageRequest) bool {
+	last := req.Messages[len(req.Messages)-1].Content[0]
+	return last.Type == "text" && (last.Text == compactInstruction || strings.Contains(last.Text, "---CONVERSATION---"))
 }
 
 // toolResult returns the tool_result the loop sent back for the scripted call.
@@ -213,10 +228,11 @@ func TestFailureLimitStopsEveryEntryPoint(t *testing.T) {
 	}
 }
 
-// TestCompactionFiresAfterFailedRequest: once a request overflows, the only
-// token count on hand is from the last request that succeeded - smaller than
-// the history now is. The next message must judge the history itself and
-// compact, not keep trusting that stale count and fail forever.
+// TestCompactionFiresAfterFailedRequest: the only token count on hand is from
+// an earlier, smaller history. The history itself must be judged, so the
+// message compacts before sending - and when the in-place summary request
+// fails, as an overflowing one would, the transcript fallback still gets it
+// done, rather than the stale count leaving the history to fail forever.
 func TestCompactionFiresAfterFailedRequest(t *testing.T) {
 	client := &scriptedClient{tool: "bash", input: map[string]any{"command": "true"}, fail: 1}
 	loop := newScriptedLoop(client, nil)
@@ -230,13 +246,84 @@ func TestCompactionFiresAfterFailedRequest(t *testing.T) {
 	}
 	loop.Compaction.LastInputTokens = 1000 // from before the history grew
 
-	if err := loop.SendMessage(context.Background(), "first"); err == nil {
-		t.Fatalf("expected the overflowing request to fail")
-	}
-	if err := loop.SendMessage(context.Background(), "again"); err != nil {
-		t.Fatalf("second message failed: %v", err)
+	if err := loop.SendMessage(context.Background(), "first"); err != nil {
+		t.Fatalf("message failed: %v", err)
 	}
 	if loop.Compaction.CompactionCount != 1 {
-		t.Errorf("history was never compacted after the failed request")
+		t.Errorf("history was never compacted after the failed attempt")
 	}
+}
+
+// TestCompactionSummarizesInPlace: the summary is asked for at the end of the
+// conversation, sent with the turn's own system prompt and tools, so the server
+// serves the whole history from its prompt cache - and the system prompt is the
+// same after compacting, so that shared prefix stays cached too.
+func TestCompactionSummarizesInPlace(t *testing.T) {
+	client := &scriptedClient{tool: "bash", input: map[string]any{"command": "true"}}
+	loop := newScriptedLoop(client, nil)
+	loop.Session.Messages = []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "read the file"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "ok"}}},
+	}
+	history := len(loop.Session.Messages)
+	system := loop.systemPrompt()
+
+	if _, err := loop.ManualCompact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("made %d requests, want one in-place summary request", len(client.requests))
+	}
+	req := client.requests[0]
+	if req.System != system || len(req.Tools) != len(loop.allTools()) {
+		t.Errorf("summary request didn't carry the turn's own system prompt and tools - no shared prefix to reuse")
+	}
+	if len(req.Messages) != history+1 || req.Messages[history].Content[0].Text != compactInstruction {
+		t.Errorf("summary request should be the history plus one instruction, got %d messages", len(req.Messages))
+	}
+	if loop.systemPrompt() != system {
+		t.Errorf("system prompt changed on compaction: everything after it has to be prefilled again")
+	}
+	if !strings.Contains(loop.Session.Messages[0].Content[0].Text, "summary") {
+		t.Errorf("summary missing from the continuation message")
+	}
+}
+
+// TestCompactionFallsBackWhenSummaryIsAToolCall: a model can answer the
+// in-place request with a tool call instead of text. That's no summary, so the
+// transcript prompt - which offers no tools - is tried instead.
+func TestCompactionFallsBackWhenSummaryIsAToolCall(t *testing.T) {
+	client := &toolFirstSummaryClient{}
+	loop := NewConversationLoop(&Config{Model: "test-model", MaxTokens: 1024, ContextWindow: 40960}, client)
+	loop.Session.Messages = []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}}}
+
+	summary, err := loop.ManualCompact(context.Background())
+	if err != nil || summary != "transcript summary" {
+		t.Fatalf("got %q, %v; want the transcript fallback's summary", summary, err)
+	}
+	if len(client.requests) != 2 || len(client.requests[1].Tools) != 0 {
+		t.Fatalf("want an in-place request then a tool-less transcript request, got %d", len(client.requests))
+	}
+}
+
+// toolFirstSummaryClient answers a request that offers tools with a tool call,
+// and one that doesn't with text.
+type toolFirstSummaryClient struct{ requests []api.CreateMessageRequest }
+
+func (c *toolFirstSummaryClient) StreamResponse(_ context.Context, req api.CreateMessageRequest) (<-chan api.StreamEvent, error) {
+	c.requests = append(c.requests, req)
+	ch := make(chan api.StreamEvent, 8)
+	defer close(ch)
+	if len(req.Tools) > 0 {
+		ch <- api.StreamEvent{Type: api.EventContentBlockStart, ContentBlock: api.ContentBlockInfo{Type: "tool_use", ID: "c1", Name: "bash"}}
+		ch <- api.StreamEvent{Type: api.EventContentBlockStop}
+		ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "tool_use"}
+	} else {
+		ch <- api.StreamEvent{Type: api.EventContentBlockStart, ContentBlock: api.ContentBlockInfo{Type: "text"}}
+		ch <- api.StreamEvent{Type: api.EventContentBlockDelta, Delta: api.Delta{Type: "text_delta", Text: "transcript summary"}}
+		ch <- api.StreamEvent{Type: api.EventContentBlockStop}
+		ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "end_turn"}
+	}
+	ch <- api.StreamEvent{Type: api.EventMessageStop}
+	return ch, nil
 }

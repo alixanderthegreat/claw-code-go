@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -18,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -85,15 +87,16 @@ const (
 
 // Bubble Tea messages for async streaming events.
 type (
-	streamDeltaMsg    struct{ text string }
-	streamThinkingMsg struct{ text string }
-	streamToolMsg     struct{ name, input string }
-	streamToolDoneMsg struct{ name, result string }
-	streamUsageMsg    struct{ inputTokens, outputTokens int }
-	streamDoneMsg     struct{}
-	streamErrMsg      struct{ err error }
-	streamWarnMsg     struct{ text string }
-	streamPermAskMsg  struct {
+	streamDeltaMsg     struct{ text string }
+	streamThinkingMsg  struct{ text string }
+	streamToolMsg      struct{ name, input string }
+	streamToolDoneMsg  struct{ name, result string }
+	streamToolDraftMsg struct{ text string }
+	streamUsageMsg     struct{ inputTokens, outputTokens, cachedTokens int }
+	streamDoneMsg      struct{}
+	streamErrMsg       struct{ err error }
+	streamWarnMsg      struct{ text string }
+	streamPermAskMsg   struct {
 		name, input string
 		reply       chan runtime.PermDecision
 	}
@@ -145,9 +148,22 @@ type Model struct {
 	viewBuf   string // finalized history (all complete turns)
 	streamBuf string // in-progress streaming content
 
+	// what the turn is doing right now, shown with the spinner in the status bar
+	// (activity.go): waiting on the model, running a tool, writing a tool call.
+	activity      string
+	activitySince time.Time
+	activityTimed bool // show how long it's been going
+
+	// the reply's text block still streaming in, rendered as markdown once it's
+	// complete (markdown.go): it starts at streamBuf[mdStart:]
+	mdOpen  bool
+	mdStart int
+	mdText  string
+
 	// token counts for status bar
 	inputTokens  int
 	outputTokens int
+	cachedTokens int // how many of inputTokens came from the server's prompt cache
 
 	// whether any streaming content has arrived (suppresses spinner)
 	hasStreamContent bool
@@ -186,6 +202,13 @@ type Model struct {
 	loginProvider string          // provider selected during login
 	loginKeyInput textinput.Model // API key entry input (single-line, masked)
 
+	// speech in and out (voice.go)
+	voice *voiceState
+
+	// queued is a message typed and sent (Enter) while a turn was running; it's
+	// submitted as soon as the TUI is back to waiting for input.
+	queued string
+
 	// app deps
 	loop *runtime.ConversationLoop
 	cfg  *runtime.Config
@@ -212,7 +235,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 	// is actually there at all, even though it's fully loaded underneath.
 	if loop.Session != nil && len(loop.Session.Messages) > 0 {
 		viewBuf += "\n" + statusStyle.Render(fmt.Sprintf("── Resumed session %s (%d messages) ──", loop.Session.ID, len(loop.Session.Messages))) + "\n\n"
-		viewBuf += renderHistory(loop.Session.Messages)
+		viewBuf += renderHistory(loop.Session.Messages, terminalWidth())
 	}
 
 	return Model{
@@ -223,6 +246,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		loop:     loop,
 		cfg:      cfg,
 		viewBuf:  viewBuf,
+		voice:    newVoiceState(cfg),
 	}
 }
 
@@ -236,6 +260,22 @@ func (m Model) Init() tea.Cmd {
 
 // Update is the Bubble Tea Update function.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	// A message queued during the turn goes out the moment the TUI is idle
+	// again - however the turn ended: reply, error, cancel, shell, /compact.
+	if mm, ok := next.(Model); ok && mm.state == stateInput && mm.queued != "" {
+		text := mm.queued
+		mm.queued = ""
+		next2, cmd2 := mm.submitText(text)
+		return next2, tea.Batch(cmd, cmd2)
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, ok := m.handleVoiceMsg(msg); ok {
+		return mm, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -266,11 +306,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 		}
+		m = m.setActivity("Writing…", false)
+		if !m.mdOpen {
+			m.mdOpen, m.mdStart, m.mdText = true, len(m.streamBuf), ""
+		}
 		m.streamBuf += msg.text
+		m.mdText += msg.text
+		m.voice.reply += msg.text
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
 	case streamThinkingMsg:
+		m = m.closeMarkdown()
+		m = m.setActivity("Thinking…", true)
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 			m.streamBuf += thinkingHeaderStyle.Render("✻ Thinking…") + "\n"
@@ -280,15 +328,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForStream(m.streamChan)
 
 	case streamToolMsg:
+		m = m.closeMarkdown()
+		m = m.setActivity("Running "+msg.name+"…", true)
 		if !m.hasStreamContent {
 			m.hasStreamContent = true
 		}
 		line := toolRunningStyle.Render(fmt.Sprintf("  ◆ %s: %s", msg.name, msg.input)) + "\n"
 		m.streamBuf += line
+		m.voice.reply = "" // only what comes after the last tool call is the answer
+		m = m.refreshViewport()
+		return m, waitForStream(m.streamChan)
+
+	case streamToolDraftMsg:
+		m = m.closeMarkdown()
+		m = m.setActivity(msg.text, false)
 		m = m.refreshViewport()
 		return m, waitForStream(m.streamChan)
 
 	case streamToolDoneMsg:
+		// The results go back to the model: waiting on it again.
+		m = m.setActivity("Thinking…", true)
 		suffix := ""
 		if msg.result != "" {
 			suffix = " → " + truncate(msg.result, 500)
@@ -301,14 +360,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamUsageMsg:
 		m.inputTokens = msg.inputTokens
 		m.outputTokens = msg.outputTokens
+		m.cachedTokens = msg.cachedTokens
 		return m, waitForStream(m.streamChan)
 
 	case streamDoneMsg:
+		m = m.closeMarkdown()
+		m.activity = ""
 		// Commit streamBuf to viewBuf with token annotation.
 		if m.streamBuf != "" || m.hasStreamContent {
 			tokLine := "\n\n" + statusStyle.Render(fmt.Sprintf(
-				"Tokens: %s in / %s out",
-				formatNum(m.inputTokens),
+				"Tokens: %s / %s out",
+				formatTokensIn(m.inputTokens, m.cachedTokens),
 				formatNum(m.outputTokens),
 			)) + "\n\n"
 			m.viewBuf += m.streamBuf + tokLine
@@ -322,7 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		// Update status bar with final token counts.
 		m = m.refreshViewport()
-		return m, nil
+		return m, m.speakReplyCmd()
 
 	case streamWarnMsg:
 		m.viewBuf += renderBlock(warnStyle, fmt.Sprintf("Warning: %s", msg.text))
@@ -363,6 +425,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Error: %v", msg.err))
 		}
 		m.streamBuf = ""
+		m.mdOpen = false
+		m.activity = ""
 		m.hasStreamContent = false
 		m.state = stateInput
 		m.streamCancel = nil
@@ -371,6 +435,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shellDoneMsg:
+		m.activity = ""
 		out := strings.TrimRight(msg.output, "\n")
 		if out != "" {
 			m.viewBuf += out + "\n"
@@ -389,6 +454,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoginComplete(msg)
 
 	case compactDoneMsg:
+		m.activity = ""
 		m.state = stateInput
 		if msg.err != nil {
 			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Compact failed: %v", msg.err))
@@ -399,7 +465,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if (m.state == stateBusy && !m.hasStreamContent) || m.state == stateLoginOAuth {
+		// The spinner is drawn in the status bar (renderStatusBar), redrawn every
+		// frame - it used to be baked into the conversation's text, which is only
+		// rebuilt when output arrives, so it never moved.
+		if m.state == stateBusy || m.state == stateLoginOAuth {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -442,23 +511,58 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateLoginOAuth:
 		return m.handleLoginOAuthKey(msg)
 	case stateBusy:
+		// The input stays live during a turn: type the next message, and Enter
+		// queues it to send when this turn ends. Everything else falls through
+		// to the input handling below.
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		case tea.KeyEsc:
+			// Speech first - it's what you hear - then the turn itself.
+			if m.voice.speaker.Speaking() {
+				m.voice.speaker.Stop()
+				return m, nil
+			}
 			if m.streamCancel != nil {
 				m.turnCancelled = true
 				m.streamCancel()
 			}
 			return m, nil
+		case tea.KeyEnter:
+			text := strings.TrimSpace(m.textarea.Value())
+			if text == "" {
+				return m, nil
+			}
+			if m.queued != "" {
+				m.queued += "\n\n"
+			}
+			m.queued += text
+			m.textarea.Reset()
+			m.history.Push(text)
+			m.history.Reset()
+			return m, nil
 		}
-		return m, nil
 	}
 
 	// stateInput
 	switch msg.Type {
 	case tea.KeyCtrlC:
+		if m.voice.rec != nil {
+			m.voice.rec.Cancel()
+		}
 		return m, tea.Quit
+
+	case tea.KeyCtrlR:
+		return m.toggleRecording()
+
+	case tea.KeyEsc:
+		if m.voice.speaker.Speaking() {
+			m.voice.speaker.Stop()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return m, cmd
 
 	case tea.KeyEnter:
 		// Submit the message.
@@ -519,7 +623,11 @@ func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.textarea.Reset()
 	m.history.Push(text)
 	m.history.Reset()
+	return m.submitText(text)
+}
 
+// submitText runs text as typed: a !shell command, a /command, or a message.
+func (m Model) submitText(text string) (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(text, "!") {
 		return m.startShellCommand(strings.TrimPrefix(text, "!"))
 	}
@@ -541,6 +649,7 @@ func (m Model) startShellCommand(command string) (tea.Model, tea.Cmd) {
 	m.viewBuf += userLabelStyle.Render("!") + " " + command + "\n\n"
 	m.state = stateBusy
 	m.hasStreamContent = false
+	m = m.setActivity("Running "+truncate(command, 40)+"…", true)
 	m = m.refreshViewport()
 	return m, tea.Batch(m.spinner.Tick, runShellCommand(command))
 }
@@ -604,6 +713,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		m.streamBuf = ""
 		m.inputTokens = 0
 		m.outputTokens = 0
+		m.cachedTokens = 0
 		m = m.refreshViewport()
 		return m, nil
 
@@ -662,6 +772,12 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 
 	case "/compact":
 		return m.startCompact()
+
+	case "/mode":
+		return m.handleModeCommand(parts)
+
+	case "/voice":
+		return m.handleVoiceCommand(parts)
 
 	case "/exit", "/quit":
 		return m, tea.Quit
@@ -735,7 +851,7 @@ func (m Model) handleStatus() (tea.Model, tea.Cmd) {
 		fmt.Sprintf("Permission mode: %s", permMode),
 		fmt.Sprintf("Session ID     : %s", m.loop.Session.ID),
 		fmt.Sprintf("Messages       : %d", m.loop.MessageCount()),
-		fmt.Sprintf("Tokens in/out  : %s / %s", formatNum(m.inputTokens), formatNum(m.outputTokens)),
+		fmt.Sprintf("Tokens in/out  : %s / %s out", formatTokensIn(m.inputTokens, m.cachedTokens), formatNum(m.outputTokens)),
 	}
 	m.viewBuf += renderBlock(statusStyle, strings.Join(lines, "\n"))
 	m = m.refreshViewport()
@@ -1042,6 +1158,7 @@ func (m Model) startCompact() (tea.Model, tea.Cmd) {
 	}
 
 	m.state = stateBusy
+	m = m.setActivity("Compacting…", true)
 	m = m.refreshViewport()
 
 	loop := m.loop
@@ -1052,6 +1169,36 @@ func (m Model) startCompact() (tea.Model, tea.Cmd) {
 			return compactDoneMsg{summary: summary, err: err}
 		},
 	)
+}
+
+// handleModeCommand handles /mode [mode|default]: the session's reasoning mode (runtime/reasoning.go).
+func (m Model) handleModeCommand(parts []string) (tea.Model, tea.Cmd) {
+	if len(parts) == 1 {
+		mode := m.loop.ReasoningMode()
+		if mode == "" {
+			mode = "the model's default"
+		}
+		m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Reasoning mode: %s\nModes: %s\n"+
+			`An "i" in front is the instruct form (thinking off), e.g. /mode iholodeck. /mode default resets.`,
+			mode, strings.Join(runtime.ReasoningModes, ", ")))
+		m = m.refreshViewport()
+		return m, nil
+	}
+
+	mode, err := m.loop.SetReasoningMode(parts[1])
+	if err != nil {
+		m.viewBuf += renderBlock(errorStyle, err.Error())
+		m = m.refreshViewport()
+		return m, nil
+	}
+	shown := mode
+	if shown == "" {
+		shown = "the model's default"
+	}
+	m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Reasoning mode: %s - from your next message. "+
+		"The mode's instructions go at the top of the prompt, so that message reprocesses the whole history once.", shown))
+	m = m.refreshViewport()
+	return m, nil
 }
 
 // startOAuthLogin prepares the OAuth session, shows the URL, and waits in background.
@@ -1200,6 +1347,9 @@ func (m Model) viewAskUser() string {
 
 // startMessage begins a streaming conversation turn.
 func (m Model) startMessage(text string) (tea.Model, tea.Cmd) {
+	m = m.setActivity("Thinking…", true)
+	m.voiceTurnStarted()
+	m.voice.speaker.Stop()
 	m.viewBuf += userLabelStyle.Render("You") + ": " + text + "\n\n"
 	m.viewBuf += assistantLabelStyle.Render("Gordi") + ": "
 	m.state = stateBusy
@@ -1367,15 +1517,29 @@ func (m Model) renderStatusBar() string {
 	var bar string
 	if m.inputTokens > 0 || m.outputTokens > 0 {
 		bar = fmt.Sprintf(
-			"Tokens: %s in / %s out  │  Session: %s",
-			formatNum(m.inputTokens), formatNum(m.outputTokens),
+			"Tokens: %s / %s out  │  Session: %s",
+			formatTokensIn(m.inputTokens, m.cachedTokens), formatNum(m.outputTokens),
 			m.loop.Session.ID,
 		)
 	} else {
 		bar = "Session: " + m.loop.Session.ID
 	}
+	if act := m.activityLine(); act != "" {
+		bar = act + "  │  " + bar
+	}
 	if m.state == stateBusy {
 		bar += "  │  Esc to cancel"
+		if m.queued != "" {
+			bar += "  │  Message queued - sends when this finishes"
+		} else {
+			bar += "  │  Enter queues your next message"
+		}
+	}
+	if vs := m.voiceStatus(); vs != "" {
+		bar += "  │  " + vs
+	}
+	if m.width > 0 { // one line, or it pushes the layout down
+		bar = ansi.Truncate(bar, m.width, "…")
 	}
 	return statusStyle.Render(bar)
 }
@@ -1433,6 +1597,8 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Model & Config"),
 		"  "+userLabelStyle.Render("/model")+"                          Change the active model (picker)",
+		"  "+userLabelStyle.Render("/mode")+" [mode|default]            This session's reasoning mode (Jumbo/Turbo-Brilliance)",
+		"  "+userLabelStyle.Render("/voice")+" [auto|on|off]            When replies are said aloud (auto: when you spoke)",
 		"  "+userLabelStyle.Render("/config")+"                         Show all config values",
 		"  "+userLabelStyle.Render("/config")+" <key>                   Show one config value",
 		"  "+userLabelStyle.Render("/config")+" <key> <value>           Set config value (saves to project)",
@@ -1458,6 +1624,8 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("Ctrl+N")+"         Insert newline (multi-line input)",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Navigate input history (single-line mode)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
+		"  "+userLabelStyle.Render("Ctrl+R")+"         Start/stop recording - the transcript lands in the input",
+		"  "+userLabelStyle.Render("Esc")+"            Stop speech",
 		"  "+userLabelStyle.Render("Shift+Tab")+"      Cycle permission mode (default → accept-edits → bypass → plan)",
 		"  "+userLabelStyle.Render("!")+"<command>      Run a shell command directly, skipping the model",
 		"  "+userLabelStyle.Render("Ctrl+C")+"         Exit",
@@ -1577,10 +1745,14 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 				return streamThinkingMsg{text: ev.Text}
 			case runtime.TurnEventToolStart:
 				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput}
+			case runtime.TurnEventToolDraft:
+				return streamToolDraftMsg{text: draftLine(ev.ToolName, ev.ToolInput, ev.DraftBytes)}
+			case runtime.TurnEventToolProgress:
+				return streamToolDraftMsg{text: progressLine(ev.ToolName, ev.ToolInput)}
 			case runtime.TurnEventToolDone:
 				return streamToolDoneMsg{name: ev.ToolName, result: ev.ToolResult}
 			case runtime.TurnEventUsage:
-				return streamUsageMsg{inputTokens: ev.InputTokens, outputTokens: ev.OutputTokens}
+				return streamUsageMsg{inputTokens: ev.InputTokens, outputTokens: ev.OutputTokens, cachedTokens: ev.CachedTokens}
 			case runtime.TurnEventDone:
 				return streamDoneMsg{}
 			case runtime.TurnEventError:
@@ -1626,9 +1798,6 @@ func (m Model) viewportHeight() int {
 // refreshViewport rebuilds viewport content from current buffers.
 func (m Model) refreshViewport() Model {
 	content := m.viewBuf + m.streamBuf
-	if m.state == stateBusy && !m.hasStreamContent {
-		content += m.spinner.View() + statusStyle.Render(" Thinking…\n")
-	}
 	// viewport.Model does not word-wrap on its own (it only splits on "\n"),
 	// so long streamed lines — reasoning text especially, which arrives as
 	// unbroken paragraphs — would run past the terminal edge. Wrap ANSI-aware
@@ -1669,6 +1838,15 @@ func formatSessionList(metas []runtime.SessionMeta) string {
 			formatNum(m.TotalOutputTokens)))
 	}
 	return sb.String()
+}
+
+// formatTokensIn renders an input token count, with how much of it the
+// server's prompt cache served when it reported any: "16,974 in (16,801 cached)".
+func formatTokensIn(in, cached int) string {
+	if cached <= 0 {
+		return formatNum(in) + " in"
+	}
+	return fmt.Sprintf("%s in (%s cached)", formatNum(in), formatNum(cached))
 }
 
 func formatNum(n int) string {

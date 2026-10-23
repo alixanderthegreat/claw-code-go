@@ -138,8 +138,11 @@ type oaiFunctionDelta struct {
 }
 
 type oaiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 }
 
 // ----- StreamResponse --------------------------------------------------------
@@ -175,6 +178,8 @@ func (c *Client) StreamResponse(ctx context.Context, req api.CreateMessageReques
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	// Names this client to simple-bot's gateway, which logs each request's usage by caller.
+	httpReq.Header.Set("X-Client", "claw-code-go")
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
@@ -353,6 +358,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		finishReason    string
 		outputTokens    int
 		inputTokens     int
+		cachedTokens    int
 	)
 
 	for scanner.Scan() {
@@ -377,6 +383,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		if chunk.Usage != nil {
 			inputTokens = chunk.Usage.PromptTokens
 			outputTokens = chunk.Usage.CompletionTokens
+			cachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 		}
 
 		for _, choice := range chunk.Choices {
@@ -502,8 +509,9 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 
 	// Emit message_start with token counts (OpenAI only provides usage in the final chunk).
 	send(api.StreamEvent{
-		Type:        api.EventMessageStart,
-		InputTokens: inputTokens,
+		Type:         api.EventMessageStart,
+		InputTokens:  inputTokens,
+		CachedTokens: cachedTokens,
 	})
 
 	// Map OpenAI finish_reason to our stop_reason vocabulary.

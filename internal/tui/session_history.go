@@ -14,7 +14,7 @@ import (
 //
 // "Thinking" content is never persisted to session messages in the first place (see
 // runtime.runOneTurnStreaming's own comment on why), so there's nothing to reconstruct for it here.
-func renderHistory(messages []api.Message) string {
+func renderHistory(messages []api.Message, width int) string {
 	if len(messages) == 0 {
 		return ""
 	}
@@ -70,7 +70,7 @@ func renderHistory(messages []api.Message) string {
 				}
 			}
 			if len(texts) > 0 {
-				sb.WriteString(assistantLabelStyle.Render("Gordi") + ": " + strings.Join(texts, "\n") + "\n\n")
+				sb.WriteString(assistantLabelStyle.Render("Gordi") + ": " + renderMarkdown(strings.Join(texts, "\n"), width) + "\n\n")
 			}
 			for _, line := range toolLines {
 				sb.WriteString(line + "\n")

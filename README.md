@@ -220,6 +220,7 @@ Separate from the flags above - these run once and exit, no TUI involved:
 | `/clear` | Clear the current session |
 | `/session-list` | Browse saved sessions |
 | `/model <name>` | Switch model mid-session |
+| `/mode [mode\|default]` | This session's reasoning mode for DavidAU Jumbo/Turbo-Brilliance models - `holodeck`, `deeptree`, `help`...; an `i` in front (`iholodeck`) is instruct form. Sent as a `{REASON:mode}` tag leading each of your messages, where the model's chat template reads it. `/clear` resets it |
 | `/compact` | Manually trigger context compaction |
 | `/cost` | Show current session token usage and estimated cost |
 | `/exit` or `/quit` | Exit the REPL |
