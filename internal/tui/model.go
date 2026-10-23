@@ -1809,10 +1809,10 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 func (m Model) initViewport() Model {
 	vpHeight := m.viewportHeight()
 	m.viewport = viewport.New(m.width, vpHeight)
-	m.viewport.SetContent(m.viewBuf)
-	m.viewport.GotoBottom()
 	m.textarea.SetWidth(max(m.width-2, 10))
-	return m
+	// Through refreshViewport, which wraps: content set raw ran off the edge -
+	// a resumed session's long lines stayed cut until new output redrew it.
+	return m.refreshViewport()
 }
 
 // resizeViewport updates dimensions after a window resize.
@@ -1820,7 +1820,7 @@ func (m Model) resizeViewport() Model {
 	m.viewport.Width = m.width
 	m.viewport.Height = m.viewportHeight()
 	m.textarea.SetWidth(max(m.width-2, 10))
-	return m
+	return m.refreshViewport() // re-wrap to the new width
 }
 
 // viewportHeight calculates the viewport height from the terminal height.

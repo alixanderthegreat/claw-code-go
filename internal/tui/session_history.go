@@ -47,6 +47,11 @@ func renderHistory(messages []api.Message, width int) string {
 					if block.IsError {
 						style, mark = toolFailedStyle, "✗"
 					}
+					if header, body, ok := consultDisplay(resultText, width); name == "consult" && ok && !block.IsError {
+						// As live: a consultant's answer is there to be read, all of it.
+						toolLines = append(toolLines, style.Render("  ✓ consult → "+header)+"\n"+body)
+						continue
+					}
 					toolLines = append(toolLines, style.Render(fmt.Sprintf("  %s %s → %s", mark, name, cut(resultText, 500))))
 				}
 			}
