@@ -5,13 +5,14 @@ import (
 	"sync"
 )
 
-// Assembler collects and caches project context for injection into the system prompt.
+// Assembler collects project context: the stable part for the system prompt (Stable - instructions,
+// skills, memory), and what changes each turn for the head of the user's message (Assemble).
 type Assembler struct {
 	WorkDir string
 
-	mu        sync.Mutex
-	memCache  string
-	memMtimes map[string]int64
+	mu           sync.Mutex
+	stableCache  string
+	stableMtimes map[string]int64
 }
 
 // NewAssembler creates an Assembler for the given working directory.
@@ -19,8 +20,8 @@ func NewAssembler(workDir string) *Assembler {
 	return &Assembler{WorkDir: workDir}
 }
 
-// Assemble returns a formatted context block combining environment info, git status,
-// and CLAUDE.md memory files. Any individual failure is silently skipped.
+// Assemble returns what changes from turn to turn - environment info (the clock) and git status -
+// for the head of the user's message. Any individual failure is silently skipped.
 func (a *Assembler) Assemble() string {
 	var sections []string
 
@@ -32,27 +33,24 @@ func (a *Assembler) Assemble() string {
 		sections = append(sections, "# Git Status\n\n"+git)
 	}
 
-	if mem := a.loadMemory(); mem != "" {
-		sections = append(sections, "# Project Instructions (CLAUDE.md)\n\n"+mem)
-	}
-
 	if len(sections) == 0 {
 		return ""
 	}
 	return strings.Join(sections, "\n\n")
 }
 
-// loadMemory returns cached CLAUDE.md content, re-reading only when files change.
-func (a *Assembler) loadMemory() string {
+// Stable returns the system prompt's context block (stable.go), re-read only when a file it comes
+// from changes - so the system prompt, and the cache behind it, hold still between edits.
+func (a *Assembler) Stable() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	current := MemoryFileMtimes(a.WorkDir)
-	if !mtimesEqual(current, a.memMtimes) {
-		a.memCache = LoadMemoryFiles(a.WorkDir)
-		a.memMtimes = current
+	current := StableMtimes(a.WorkDir)
+	if a.stableMtimes == nil || !mtimesEqual(current, a.stableMtimes) {
+		a.stableCache = Stable(a.WorkDir)
+		a.stableMtimes = current
 	}
-	return a.memCache
+	return a.stableCache
 }
 
 func mtimesEqual(a, b map[string]int64) bool {

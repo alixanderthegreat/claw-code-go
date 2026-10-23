@@ -170,6 +170,12 @@ func (loop *ConversationLoop) systemPrompt() string {
 	} else {
 		parts = append(parts, systemPromptBase)
 	}
+	// Instructions (CLAUDE.md, AGENTS.md), skills and memory: stable, so here, cached once.
+	if loop.CtxAssembler != nil {
+		if stable := loop.CtxAssembler.Stable(); stable != "" {
+			parts = append(parts, stable)
+		}
+	}
 
 	// No compaction summary here: it changed with every compaction, so the
 	// system prompt and tools - the one prefix every request shares - had to be
