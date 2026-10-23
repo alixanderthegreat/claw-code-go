@@ -396,7 +396,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamDoneMsg:
 		m = m.closeMarkdown()
-		m.activity = ""
+		m = m.clearActivity()
 		// Commit streamBuf to viewBuf with token annotation.
 		if m.streamBuf != "" || m.hasStreamContent {
 			tokLine := "\n\n" + statusStyle.Render(fmt.Sprintf(
@@ -457,7 +457,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.streamBuf = ""
 		m.mdOpen = false
-		m.activity = ""
+		m = m.clearActivity()
 		m.hasStreamContent = false
 		m.state = stateInput
 		m.streamCancel = nil
@@ -466,7 +466,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shellDoneMsg:
-		m.activity = ""
+		m = m.clearActivity()
 		out := strings.TrimRight(msg.output, "\n")
 		if out != "" {
 			m.viewBuf += out + "\n"
@@ -485,7 +485,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoginComplete(msg)
 
 	case compactDoneMsg:
-		m.activity = ""
+		m = m.clearActivity()
 		m.state = stateInput
 		if msg.err != nil {
 			m.viewBuf += renderBlock(errorStyle, fmt.Sprintf("Compact failed: %v", msg.err))

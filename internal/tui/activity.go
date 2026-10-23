@@ -27,6 +27,13 @@ func (m Model) setActivityKeyed(key, text string, timed bool) Model {
 	return m
 }
 
+// clearActivity ends the activity, clock and all. Clearing only the text left the key, so the next
+// turn's "Thinking…" matched the last one's and its clock ran on from the previous turn.
+func (m Model) clearActivity() Model {
+	m.activity, m.activityKey, m.activitySince, m.activityTimed = "", "", time.Time{}, false
+	return m
+}
+
 // activityLine is what's going on while busy: "⠙ Thinking… 34s".
 func (m Model) activityLine() string {
 	if m.state != stateBusy || m.activity == "" {

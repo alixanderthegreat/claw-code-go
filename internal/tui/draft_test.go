@@ -63,3 +63,18 @@ func TestSpinnerTicksAllTurn(t *testing.T) {
 		t.Errorf("a busy turn with output stopped the spinner")
 	}
 }
+
+// TestActivityClockPerTurn: each turn's "Thinking…" starts from zero, not where the last one ended.
+func TestActivityClockPerTurn(t *testing.T) {
+	m := voiceModel("off")
+	m.state = stateBusy
+	m = m.setActivity("Thinking…", true)
+	m.activitySince = time.Now().Add(-90 * time.Second) // a long first turn
+	mm, _ := m.Update(streamDoneMsg{})
+	m = mm.(Model)
+	m.state = stateBusy
+	m = m.setActivity("Thinking…", true) // the next turn starts
+	if d := time.Since(m.activitySince); d > time.Second {
+		t.Errorf("the next turn's clock started at %s, want 0", d.Round(time.Second))
+	}
+}

@@ -39,6 +39,6 @@ func TestResumedConsultShownWhole(t *testing.T) {
 	}
 	plain := strings.Join(strings.Fields(ansi.Strip(renderHistory(msgs, 100))), " ") // wrapped, so whitespace-collapsed
 	if !strings.Contains(plain, "Final word.") || strings.Contains(plain, "[Ctrl+O]") {
-		t.Errorf("resumed consult cut short (%d bytes):\n%q", len(plain), plain[max(0,len(plain)-300):])
+		t.Errorf("resumed consult cut short (%d bytes):\n%q", len(plain), plain[max(0, len(plain)-300):])
 	}
 }
