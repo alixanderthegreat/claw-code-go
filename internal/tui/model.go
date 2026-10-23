@@ -93,7 +93,7 @@ type (
 		name, input string
 		args        map[string]any
 	}
-	streamToolDoneMsg  struct {
+	streamToolDoneMsg struct {
 		name, result string
 		failed       bool
 	}
