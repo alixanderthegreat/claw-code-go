@@ -197,13 +197,10 @@ func (loop *ConversationLoop) systemPrompt() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// allTools returns built-in tools merged with any MCP tools, and consult when
-// the model has modes to consult (consult.go).
+// allTools returns built-in tools merged with any MCP tools. (Consult was a tool
+// here until 2026-10-24; it's the consult command now, a service on core.)
 func (loop *ConversationLoop) allTools() []api.Tool {
 	tools := loop.Tools
-	if SupportsReasoningTags(loop.Config.Model) {
-		tools = append(append([]api.Tool(nil), tools...), ConsultTool())
-	}
 	if loop.MCPRegistry == nil {
 		return tools
 	}
@@ -635,17 +632,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				return cancelled(i)
 			}
 
-			var result api.ContentBlock
-			if tb.name == consultToolName {
-				// A consult runs for minutes: it needs the turn's context, so Esc stops it,
-				// and the events, to show how far it's got.
-				result = capToolResult(loop.consult(ctx, events, inputMap), loop.maxToolResultChars())
-				if ctx.Err() != nil {
-					return cancelled(i)
-				}
-			} else {
-				result = loop.ExecuteTool(tb.name, inputMap)
-			}
+			result := loop.ExecuteTool(tb.name, inputMap)
 			result.ToolUseID = tb.id
 			toolResults = append(toolResults, result)
 
