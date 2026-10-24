@@ -1858,11 +1858,24 @@ func (m Model) refreshViewport() Model {
 	// unbroken paragraphs — would run past the terminal edge. Wrap ANSI-aware
 	// so existing style codes (from thinkingStyle etc.) survive the wrap.
 	if m.viewport.Width > 0 {
-		content = lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+		content = wrapAtSpaces(content, m.viewport.Width)
 	}
 	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
 	return m
+}
+
+// nbHyphen stands in for "-" while wrapping: a non-breaking hyphen, one column like the real one.
+const nbHyphen = "\u2011"
+
+// wrapAtSpaces wraps s at width, ANSI-aware, breaking lines at spaces only. lipgloss's wrap also
+// breaks after any hyphen - fine for prose, but command output is full of names: a tag list wrapped
+// to "law-of-least-" and "effort" (2026-10-24). Hyphens go in as non-breaking ones and come back
+// out; a word wider than the screen is still cut.
+func wrapAtSpaces(s string, width int) string {
+	s = strings.ReplaceAll(s, "-", nbHyphen)
+	s = lipgloss.NewStyle().Width(width).Render(s)
+	return strings.ReplaceAll(s, nbHyphen, "-")
 }
 
 // truncate shortens s to at most n runes, appending "…" if truncated.

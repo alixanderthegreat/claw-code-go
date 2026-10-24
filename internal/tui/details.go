@@ -81,7 +81,7 @@ func toolsFromHistory(messages []api.Message) []toolEntry {
 func (m Model) openDetails() Model {
 	m.details = true
 	m.detailVP = viewport.New(m.width, max(m.height-2, 1))
-	m.detailVP.SetContent(lipgloss.NewStyle().Width(max(m.width, 20)).Render(renderToolLog(m.tools)))
+	m.detailVP.SetContent(wrapAtSpaces(renderToolLog(m.tools), max(m.width, 20)))
 	m.detailVP.GotoBottom()
 	return m
 }

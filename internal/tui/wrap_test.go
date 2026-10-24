@@ -43,3 +43,24 @@ func TestResumedConsultShownWhole(t *testing.T) {
 		t.Errorf("resumed consult cut short (%d bytes):\n%q", len(plain), plain[max(0, len(plain)-300):])
 	}
 }
+
+// TestWrapKeepsHyphenatedWordsWhole: `library notes` printed a tag list that wrapped to
+// "law-of-least-" / "effort". Lines break at spaces; the hyphens come back as plain "-".
+func TestWrapKeepsHyphenatedWordsWhole(t *testing.T) {
+	m := voiceModel("off")
+	m.viewBuf = "llm-as-task-switching · 2026-10-23 · system-2, task-switching, habituation, law-of-least-effort, dependency, llm\n"
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = mm.(Model)
+	view := ansi.Strip(m.viewport.View())
+	if !strings.Contains(view, "law-of-least-effort") {
+		t.Errorf("law-of-least-effort was split:\n%s", view)
+	}
+	if strings.Contains(view, nbHyphen) {
+		t.Errorf("a non-breaking hyphen was left in:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if w := ansi.StringWidth(line); w > 90 {
+			t.Errorf("line of %d columns: %q", w, line)
+		}
+	}
+}
