@@ -135,7 +135,7 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 	}
 	if loop.CtxAssembler != nil {
 		if projCtx := loop.CtxAssembler.Assemble(); projCtx != "" {
-			text = projCtx + "\n\n" + userText
+			text = projCtx + "\n\n" + text // text: it may already carry the shell notes
 		}
 	}
 	// The session's reasoning mode, if any, leads the message: the model's template reads
