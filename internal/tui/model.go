@@ -104,6 +104,7 @@ type (
 	streamWarnMsg      struct{ text string }
 	streamPermAskMsg   struct {
 		name, input string
+		args        map[string]any
 		reply       chan runtime.PermDecision
 	}
 	streamAskUserMsg struct {
@@ -200,7 +201,9 @@ type Model struct {
 
 	// permission ask state
 	permToolName  string
-	permToolInput string
+	permToolInput string         // the runtime's one-line summary: shown when there are no args
+	permArgs      map[string]any // the call's whole input (permission.go)
+	permScroll    int            // the box's first body line, when the body doesn't fit
 	permReplyCh   chan runtime.PermDecision
 
 	// ask_user state
@@ -438,6 +441,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = statePermission
 		m.permToolName = msg.name
 		m.permToolInput = msg.input
+		m.permArgs = msg.args
+		m.permScroll = 0
 		m.permReplyCh = msg.reply
 		// In permission mode, the viewport fills most of the screen with the
 		// permission box at the bottom. Reserve ~8 lines for the box.
@@ -1481,6 +1486,18 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Deny and end the turn, so the input box is back right away instead
 		// of the model proposing its next call for another prompt.
 		decision = runtime.PermDecisionDenyAndStop
+	case "up", "k":
+		return m.permScrollBy(-1), nil
+	case "down", "j":
+		return m.permScrollBy(1), nil
+	case "pgup":
+		return m.permScrollBy(-(m.height / 2)), nil
+	case "pgdown", " ":
+		return m.permScrollBy(m.height / 2), nil
+	case "home", "g":
+		return m.permScrollBy(-1 << 30), nil
+	case "end", "G":
+		return m.permScrollBy(1 << 30), nil
 	default:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
@@ -1496,6 +1513,8 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.permReplyCh = nil
 	m.permToolName = ""
 	m.permToolInput = ""
+	m.permArgs = nil
+	m.permScroll = 0
 	m.state = stateBusy
 	m.viewport.Height = m.viewportHeight()
 	m = m.refreshViewport()
@@ -1688,30 +1707,6 @@ func (m Model) viewHelp() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func (m Model) viewPermission() string {
-	tool := userLabelStyle.Render(m.permToolName)
-	// The whole input, wrapped by the box: what's being allowed - a bash command above all -
-	// has to be readable to the end, and it used to stop at 60 characters.
-	prompt := fmt.Sprintf("Allow %s: %s?", tool, m.permToolInput)
-	hint := statusStyle.Render("[y]es-once  [a]lways  [n]o / Esc: stop the turn")
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		headerStyle.Render("Permission Required"),
-		"",
-		"  "+prompt,
-		"",
-		"  "+hint,
-	)
-	return helpBoxStyle.Width(min(72, m.width-4)).Render(content)
-}
-
-func (m Model) viewPermissionOverlay() string {
-	// The box is as tall as what's being allowed; the conversation gets what's left of the screen.
-	box := m.viewPermission()
-	vp := m.viewport
-	vp.Height = max(m.height-lipgloss.Height(box), 1)
-	return lipgloss.JoinVertical(lipgloss.Top, vp.View(), box)
-}
-
 // viewLoginProvider renders the provider selection screen.
 func (m Model) viewLoginProvider() string {
 	var b strings.Builder
@@ -1812,7 +1807,7 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			case runtime.TurnEventError:
 				return streamErrMsg{err: ev.Err}
 			case runtime.TurnEventPermissionAsk:
-				return streamPermAskMsg{name: ev.ToolName, input: ev.ToolInput, reply: ev.PermReply}
+				return streamPermAskMsg{name: ev.ToolName, input: ev.ToolInput, args: ev.ToolArgs, reply: ev.PermReply}
 			case runtime.TurnEventAskUser:
 				return streamAskUserMsg{question: ev.ToolInput, reply: ev.AskUserReply}
 			}

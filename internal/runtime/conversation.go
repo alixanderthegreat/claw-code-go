@@ -551,6 +551,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						Type:      TurnEventPermissionAsk,
 						ToolName:  tb.name,
 						ToolInput: summary,
+						ToolArgs:  inputMap, // the whole input, for the permission box to show
 						PermReply: replyCh,
 					}:
 					case <-ctx.Done():

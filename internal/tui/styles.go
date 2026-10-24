@@ -18,6 +18,7 @@ var (
 	warnStyle            lipgloss.Style
 	errorStyle           lipgloss.Style
 	helpBoxStyle         lipgloss.Style
+	permBoxStyle         lipgloss.Style
 	dividerStyle         lipgloss.Style
 	inputPromptStyle     lipgloss.Style
 	pickerHeaderStyle    lipgloss.Style
@@ -91,6 +92,11 @@ func rebuildStyles(t Theme) {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Secondary).
 		Padding(1, 2)
+
+	permBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Secondary).
+		Padding(0, 1)
 
 	dividerStyle = lipgloss.NewStyle().
 		Foreground(t.Subtle)
