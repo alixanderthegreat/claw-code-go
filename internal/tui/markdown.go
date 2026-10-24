@@ -1,12 +1,13 @@
 package tui
 
 import (
-	"os"
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/charmbracelet/glamour"
-	"golang.org/x/term"
 )
 
 // markdown.go: the model's prose rendered as markdown with Glamour - headings, lists, tables,
@@ -62,17 +63,61 @@ func (m Model) closeMarkdown() Model {
 	}
 	m.mdOpen = false
 	if m.mdStart <= len(m.streamBuf) {
-		m.streamBuf = m.streamBuf[:m.mdStart] + renderMarkdown(m.mdText, m.width)
+		m.streamBuf = m.streamBuf[:m.mdStart] + m.md.mark(m.mdText)
 	}
 	m.mdText = ""
 	return m
 }
 
-// terminalWidth is the terminal's width before Bubble Tea has reported one, 0 if unknown.
-func terminalWidth() int {
-	w, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		return 0
+// mdStore holds each rendered block's markdown, so the transcript carries a placeholder and the
+// block is rendered at the width the screen has now. Rendered once and baked in, a reply kept the
+// width it was written at: after a resize, every line too wide for the window was wrapped again,
+// a few words dropping to the left edge mid-paragraph.
+type mdStore struct {
+	mu     sync.Mutex
+	raw    []string
+	width  int
+	render []string // raw[i] rendered at width; "" until asked for
+}
+
+func newMDStore() *mdStore { return &mdStore{} }
+
+var reMDMark = regexp.MustCompile("\x00md([0-9]+)\x00")
+
+// mark stores md and returns the placeholder that stands for it in the transcript.
+func (s *mdStore) mark(md string) string {
+	if s == nil {
+		return renderMarkdown(md, 80)
 	}
-	return w
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.raw = append(s.raw, md)
+	s.render = append(s.render, "")
+	return fmt.Sprintf("\x00md%d\x00", len(s.raw)-1)
+}
+
+// expand replaces content's placeholders with their blocks rendered at width, rendering each
+// once per width.
+func (s *mdStore) expand(content string, width int) string {
+	if s == nil || !strings.Contains(content, "\x00md") {
+		return content
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if width != s.width {
+		s.width = width
+		for i := range s.render {
+			s.render[i] = ""
+		}
+	}
+	return reMDMark.ReplaceAllStringFunc(content, func(mark string) string {
+		i, err := strconv.Atoi(reMDMark.FindStringSubmatch(mark)[1])
+		if err != nil || i >= len(s.raw) {
+			return ""
+		}
+		if s.render[i] == "" {
+			s.render[i] = renderMarkdown(s.raw[i], width)
+		}
+		return s.render[i]
+	})
 }

@@ -162,6 +162,9 @@ type Model struct {
 	activitySince time.Time
 	activityTimed bool // show how long it's been going
 
+	// every rendered markdown block, by placeholder (markdown.go)
+	md *mdStore
+
 	// the reply's text block still streaming in, rendered as markdown once it's
 	// complete (markdown.go): it starts at streamBuf[mdStart:]
 	mdOpen  bool
@@ -242,13 +245,14 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(currentTheme.Primary)
 
+	md := newMDStore()
 	viewBuf := RenderLogo(appVersion)
 	// A --session-loaded history only restores loop.Session.Messages (what the model sees on the
 	// next turn) - without this, the TUI shows the startup logo with no sign the past conversation
 	// is actually there at all, even though it's fully loaded underneath.
 	if loop.Session != nil && len(loop.Session.Messages) > 0 {
 		viewBuf += "\n" + statusStyle.Render(fmt.Sprintf("── Resumed session %s (%d messages) ──", loop.Session.ID, len(loop.Session.Messages))) + "\n\n"
-		viewBuf += renderHistory(loop.Session.Messages, terminalWidth())
+		viewBuf += renderHistory(loop.Session.Messages, md)
 	}
 
 	return Model{
@@ -261,6 +265,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		viewBuf:  viewBuf,
 		voice:    newVoiceState(cfg),
 		tools:    toolsFromHistory(loop.Session.Messages),
+		md:       md,
 	}
 }
 
@@ -378,7 +383,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The results go back to the model: waiting on it again.
 		m = m.setActivity("Thinking…", true)
 		m = m.recordToolDone(msg.name, msg.result)
-		if header, body, ok := consultDisplay(msg.result, m.width); msg.name == "consult" && ok && !msg.failed {
+		if header, body, ok := consultDisplay(msg.result, m.md); msg.name == "consult" && ok && !msg.failed {
 			// A consultant's answer is there to be read: all of it, as markdown.
 			m.streamBuf += toolDoneStyle.Render("  ✓ consult → "+header) + "\n" + body + "\n"
 		} else {
@@ -1846,7 +1851,8 @@ func (m Model) viewportHeight() int {
 
 // refreshViewport rebuilds viewport content from current buffers.
 func (m Model) refreshViewport() Model {
-	content := m.viewBuf + m.streamBuf
+	// Markdown placeholders become their blocks rendered at today's width (markdown.go).
+	content := m.md.expand(m.viewBuf+m.streamBuf, m.viewport.Width)
 	// viewport.Model does not word-wrap on its own (it only splits on "\n"),
 	// so long streamed lines — reasoning text especially, which arrives as
 	// unbroken paragraphs — would run past the terminal edge. Wrap ANSI-aware

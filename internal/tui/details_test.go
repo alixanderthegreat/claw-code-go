@@ -48,7 +48,7 @@ func TestConsultAnswerShownWhole(t *testing.T) {
 	m.width, m.state = 100, stateBusy
 	answer := strings.Repeat("A considered sentence. ", 80) + "Final line."
 	mm, _ := m.Update(streamToolDoneMsg{name: "consult", result: "house answered (~1.3k tokens, 41s). It saw only what you gave it.\n\n" + answer})
-	plain := ansi.Strip(mm.(Model).streamBuf)
+	plain := ansi.Strip(mm.(Model).md.expand(mm.(Model).streamBuf, 100))
 	if !strings.Contains(plain, "Final line.") || strings.Contains(plain, "[Ctrl+O]") {
 		t.Errorf("consult answer cut short:\n%s", plain)
 	}

@@ -49,11 +49,31 @@ func TestStreamedTextRenderedInPlace(t *testing.T) {
 	}
 	mm, _ := m.Update(streamToolMsg{name: "bash", input: "ls"})
 	m = mm.(Model)
-	plain := ansi.Strip(m.streamBuf)
+	plain := ansi.Strip(m.md.expand(m.streamBuf, 80))
 	if !strings.HasPrefix(plain, "BEFORE") || strings.Contains(plain, "**") || !strings.Contains(plain, "bold") || !strings.Contains(plain, "◆ bash: ls") {
 		t.Errorf("after the tool call, streamBuf = %q", plain)
 	}
 	if m.mdOpen {
 		t.Errorf("the block should be closed after the tool call")
+	}
+}
+
+// TestRenderedRepliesRewrapOnResize: a reply is laid out at the width the screen has now, not the
+// one it was written at - narrowed, the old line breaks left words stranded at the left edge.
+func TestRenderedRepliesRewrapOnResize(t *testing.T) {
+	m := voiceModel("off")
+	para := strings.Repeat("System 2 is the lazy controller and it only engages when necessary. ", 6)
+	m.viewBuf = "Gordi: " + m.md.mark(para) + "\n"
+	for _, w := range []int{168, 100} {
+		got := ansi.Strip(m.md.expand(m.viewBuf, w))
+		for _, line := range strings.Split(got, "\n") {
+			if ansi.StringWidth(line) > w {
+				t.Errorf("width %d: a line of %d columns", w, ansi.StringWidth(line))
+			}
+		}
+		want := ansi.Strip(renderMarkdown(para, w))
+		if !strings.Contains(got, strings.TrimSpace(want)) {
+			t.Errorf("width %d: not laid out for this width", w)
+		}
 	}
 }

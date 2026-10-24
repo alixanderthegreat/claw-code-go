@@ -14,7 +14,7 @@ import (
 //
 // "Thinking" content is never persisted to session messages in the first place (see
 // runtime.runOneTurnStreaming's own comment on why), so there's nothing to reconstruct for it here.
-func renderHistory(messages []api.Message, width int) string {
+func renderHistory(messages []api.Message, md *mdStore) string {
 	if len(messages) == 0 {
 		return ""
 	}
@@ -47,7 +47,7 @@ func renderHistory(messages []api.Message, width int) string {
 					if block.IsError {
 						style, mark = toolFailedStyle, "✗"
 					}
-					if header, body, ok := consultDisplay(resultText, width); name == "consult" && ok && !block.IsError {
+					if header, body, ok := consultDisplay(resultText, md); name == "consult" && ok && !block.IsError {
 						// As live: a consultant's answer is there to be read, all of it.
 						toolLines = append(toolLines, style.Render("  ✓ consult → "+header)+"\n"+body)
 						continue
@@ -75,7 +75,7 @@ func renderHistory(messages []api.Message, width int) string {
 				}
 			}
 			if len(texts) > 0 {
-				sb.WriteString(assistantLabelStyle.Render("Gordi") + ": " + renderMarkdown(strings.Join(texts, "\n"), width) + "\n\n")
+				sb.WriteString(assistantLabelStyle.Render("Gordi") + ": " + md.mark(strings.Join(texts, "\n")) + "\n\n")
 			}
 			for _, line := range toolLines {
 				sb.WriteString(line + "\n")

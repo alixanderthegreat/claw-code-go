@@ -9,7 +9,7 @@ import (
 )
 
 func voiceModel(mode string) Model {
-	return Model{textarea: textarea.New(), voice: newVoiceState(&runtime.Config{BaseURL: "http://127.0.0.1:1/v1", VoiceMode: mode})}
+	return Model{textarea: textarea.New(), md: newMDStore(), voice: newVoiceState(&runtime.Config{BaseURL: "http://127.0.0.1:1/v1", VoiceMode: mode})}
 }
 
 // TestTranscriptJoinsTheDraft: a transcript is added to what's already typed, not put in its place,

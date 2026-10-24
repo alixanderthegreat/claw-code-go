@@ -157,11 +157,12 @@ func argText(v any) string {
 }
 
 // consultDisplay is how a consult's result shows in the transcript: its header line, then the whole
-// answer rendered as markdown - it's there to be read. ok is false for anything that isn't an answer.
-func consultDisplay(result string, width int) (header, body string, ok bool) {
+// answer as markdown (a placeholder in md) - it's there to be read. ok is false for anything that
+// isn't an answer.
+func consultDisplay(result string, md *mdStore) (header, body string, ok bool) {
 	head, answer, found := strings.Cut(result, "\n\n")
 	if !found || strings.HasPrefix(result, "couldn't consult") {
 		return "", "", false
 	}
-	return head, renderMarkdown(answer, width), true
+	return head, md.mark(answer), true
 }

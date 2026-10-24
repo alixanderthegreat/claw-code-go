@@ -37,7 +37,8 @@ func TestResumedConsultShownWhole(t *testing.T) {
 		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "c", Content: []api.ContentBlock{{Type: "text",
 			Text: "business answered (~2.5k tokens, 77s). It saw only what you gave it.\n\n" + strings.Repeat("Any engineer can learn Kubernetes. ", 40) + "Final word."}}}}},
 	}
-	plain := strings.Join(strings.Fields(ansi.Strip(renderHistory(msgs, 100))), " ") // wrapped, so whitespace-collapsed
+	md := newMDStore()
+	plain := strings.Join(strings.Fields(ansi.Strip(md.expand(renderHistory(msgs, md), 100))), " ") // wrapped, so whitespace-collapsed
 	if !strings.Contains(plain, "Final word.") || strings.Contains(plain, "[Ctrl+O]") {
 		t.Errorf("resumed consult cut short (%d bytes):\n%q", len(plain), plain[max(0, len(plain)-300):])
 	}
