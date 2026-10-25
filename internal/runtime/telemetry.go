@@ -12,10 +12,15 @@ import (
 // message, an argument or a result.
 //
 //	gordi_run   one model request: tokens (prompt, cached, output, thinking), MTP drafts,
-//	            time to first output, duration, stop and finish reasons, kronk's failure if any
+//	            time to first output, prefill speed, duration, stop and finish reasons, kronk's
+//	            failure if any
 //	gordi_tool  one tool call: duration, failed, output trimmed, asked you, denied
 //	gordi_turn  one exchange: requests, tools, and its time split into model, tools, and you
 //	gordi_image one image given to the model: from your message or read_file, its size and type
+
+// minPrefillSample is the fewest fresh prompt tokens a request reads for its prefill speed to
+// count.
+const minPrefillSample = 500
 
 // turnStats accumulates one exchange for its gordi_turn event.
 type turnStats struct {
@@ -45,6 +50,14 @@ func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelt
 	if !firstOut.IsZero() {
 		ttft = firstOut.Sub(start).Milliseconds()
 	}
+	// Prefill speed on real work - the bench was the only measure of it: the tokens kronk read
+	// fresh over the time to the first output. Only for a request with enough fresh tokens that
+	// the first token's own cost doesn't swamp it; 0 otherwise.
+	fresh := input - cached
+	prefillTPS := 0
+	if fresh >= minPrefillSample && ttft > 0 {
+		prefillTPS = int(float64(fresh) / (float64(ttft) / 1000))
+	}
 	loop.Telemetry.Send("gordi_run", map[string]any{
 		"session":          loop.Session.ID,
 		"round":            loop.stats.rounds,
@@ -57,6 +70,8 @@ func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelt
 		"draft_tokens":     u.DraftTokens,
 		"draft_accepted":   u.DraftAcceptedTokens,
 		"ttft_ms":          ttft,
+		"fresh_tokens":     fresh,
+		"prefill_tps":      prefillTPS,
 		"ms":               ms,
 		"stop":             stop,
 		"finish":           u.FinishReason,
