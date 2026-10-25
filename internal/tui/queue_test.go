@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"claw-code-go/internal/runtime"
 )
 
 func typeText(m Model, s string) Model {
@@ -59,5 +61,29 @@ func TestEscKeepsWhatTheTurnShowed(t *testing.T) {
 	}
 	if m.streamBuf != "" || m.state != stateInput {
 		t.Errorf("streamBuf %q, state %v", m.streamBuf, m.state)
+	}
+}
+
+// TestMessageMidTurnGoesToTheLoop: Enter during a turn hands the message to the loop for its next
+// step and shows it in the transcript; a / command still waits for the turn to end.
+func TestMessageMidTurnGoesToTheLoop(t *testing.T) {
+	cfg := &runtime.Config{Model: "m", MaxTokens: 100, ContextWindow: 32768}
+	m := NewModel(cfg, runtime.NewConversationLoop(cfg, &recordingClient{}))
+	m.width, m.height = 100, 30
+	m.state = stateBusy
+	m = typeText(m, "use b.txt instead")
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mm.(Model)
+	if !strings.Contains(m.streamBuf, "use b.txt instead") || m.queued != "" {
+		t.Errorf("streamBuf %q, queued %q", m.streamBuf, m.queued)
+	}
+	if left := m.loop.TakeInterjections(); len(left) != 1 || left[0] != "use b.txt instead" {
+		t.Errorf("the loop got %q", left)
+	}
+	m = typeText(m, "/voice off")
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mm.(Model)
+	if m.queued != "/voice off" {
+		t.Errorf("a command mid-turn: queued %q", m.queued)
 	}
 }

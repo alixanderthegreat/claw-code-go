@@ -296,7 +296,17 @@ func (m Model) Init() tea.Cmd {
 // Update is the Bubble Tea Update function.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	// A message queued during the turn goes out the moment the TUI is idle
+	// A message sent mid-turn that the model never got to - the turn ended on
+	// the answer it was writing - goes out as the next message, however the turn
+	// ended. It's already in the transcript, so it isn't printed again.
+	if mm, ok := next.(Model); ok && mm.state == stateInput && mm.loop != nil {
+		if left := mm.loop.TakeInterjections(); len(left) > 0 {
+			mm.viewBuf += renderBlock(statusStyle, "Gordi finished before reading your message - sending it now.")
+			next2, cmd2 := mm.startTurn(strings.Join(left, "\n\n"))
+			return next2, tea.Batch(cmd, cmd2)
+		}
+	}
+	// A ! or / command queued during the turn runs the moment the TUI is idle
 	// again - however the turn ended: reply, error, cancel, shell, /compact.
 	if mm, ok := next.(Model); ok && mm.state == stateInput && mm.queued != "" {
 		text := mm.queued
@@ -585,21 +595,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateLoginOAuth:
 		return m.handleLoginOAuthKey(msg)
 	case stateBusy:
-		// The input stays live during a turn: type the next message, and the
-		// send key queues it to send when this turn ends. Everything else falls
-		// through to the input handling below.
+		// The input stays live during a turn. A message goes to the model at its
+		// next step, with that round's tool results (runtime/interject.go), and
+		// shows in the transcript where you sent it. A ! or / command is for
+		// Gordi, not the model: it waits for the turn to end. Everything else
+		// falls through to the input handling below.
 		if isSendKey(msg) {
 			text := strings.TrimSpace(m.textarea.Value())
 			if text == "" {
 				return m, nil
 			}
-			if m.queued != "" {
-				m.queued += "\n\n"
-			}
-			m.queued += text
 			m.textarea.Reset()
 			m.history.Push(text)
 			m.history.Reset()
+			if strings.HasPrefix(text, "!") || strings.HasPrefix(text, "/") {
+				if m.queued != "" {
+					m.queued += "\n\n"
+				}
+				m.queued += text
+				return m, nil
+			}
+			m.loop.Interject(text)
+			m = m.closeMarkdown()
+			m.streamBuf += "\n\n" + userLabelStyle.Render("You") + ": " + text + "\n" +
+				statusStyle.Render("(Gordi reads this at its next step)") + "\n\n"
+			m = m.refreshViewport()
+			m.viewport.GotoBottom()
 			return m, nil
 		}
 		switch msg.Type {
@@ -1660,9 +1681,9 @@ func (m Model) renderStatusBar() string {
 	if m.state == stateBusy {
 		bar += "  │  Esc to cancel"
 		if m.queued != "" {
-			bar += "  │  Message queued - sends when this finishes"
+			bar += "  │  Command queued - runs when this finishes"
 		} else {
-			bar += "  │  Enter queues your next message"
+			bar += "  │  Enter sends a message to its next step"
 		}
 	}
 	if vs := m.voiceStatus(); vs != "" {

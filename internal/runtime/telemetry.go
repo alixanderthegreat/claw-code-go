@@ -28,6 +28,7 @@ type turnStats struct {
 	source                 string // "message", or "shell" for a ! command's output on its own
 	rounds, tools, failed  int
 	retries, compactions   int
+	interjections          int // messages you sent mid-turn that reached the model in it
 	modelMs, toolMs, youMs int64
 }
 
@@ -115,6 +116,7 @@ func (loop *ConversationLoop) emitTurn(outcome string) {
 		"failed":      s.failed,
 		"retries":     s.retries,
 		"compactions": s.compactions,
+		"interjected": s.interjections,
 		"ms":          time.Since(s.start).Milliseconds(),
 		"model_ms":    s.modelMs,
 		"tool_ms":     s.toolMs,

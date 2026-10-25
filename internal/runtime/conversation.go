@@ -51,6 +51,8 @@ type ConversationLoop struct {
 	shellNotes []string
 	// shellImages are images those commands printed the path of, to go with them (images.go).
 	shellImages []string
+	// interjected are messages sent while a turn runs, for its next step (interject.go).
+	interjected interjections
 
 	// Telemetry sends gordi_* events to the gateway (telemetry.go); nil sends nothing.
 	Telemetry    *telemetry.Sender
@@ -728,7 +730,8 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			return "", 0, 0, 0, nil
 		}
 
-		loop.appendToolResults(toolResults, nil, "")
+		// Anything you sent mid-turn goes with this round's results (interject.go).
+		loop.appendToolResults(append(toolResults, loop.interjectionBlock()...), nil, "")
 	}
 
 	return stopReason, inputTokens, outputTokens, cachedTokens, nil
