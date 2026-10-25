@@ -28,6 +28,19 @@ func (loop *ConversationLoop) attachImages(text string) []api.ContentBlock {
 	return blocks
 }
 
+// takeShellImages loads the images ! commands printed since the last message, and clears them.
+func (loop *ConversationLoop) takeShellImages() []api.ContentBlock {
+	var blocks []api.ContentBlock
+	for _, path := range loop.shellImages {
+		if block, size, err := tools.LoadImage(path); err == nil {
+			blocks = append(blocks, block)
+			loop.emitImage("shell", path, size)
+		}
+	}
+	loop.shellImages = nil
+	return blocks
+}
+
 // readImage is read_file's result for an image: a line saying what it is, and the image.
 func (loop *ConversationLoop) readImage(path string) api.ContentBlock {
 	block, size, err := tools.LoadImage(path)

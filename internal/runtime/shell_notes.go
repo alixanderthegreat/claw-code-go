@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"claw-code-go/internal/tools"
 )
 
 // shell_notes.go: what the user ran themselves with "!" in the TUI. The output used to go to the
@@ -32,6 +34,11 @@ func (loop *ConversationLoop) NoteShellCommand(command, output string, err error
 		note += "\n(" + err.Error() + ")"
 	}
 	loop.shellNotes = append(loop.shellNotes, note)
+	// A command whose whole output is one image's path - screenshot - is showing
+	// the model that image; it goes with the note (images.go).
+	if p := strings.TrimSpace(output); err == nil && !strings.Contains(p, "\n") && tools.ImageMediaType(p) != "" {
+		loop.shellImages = append(loop.shellImages, p)
+	}
 }
 
 // takeShellNotes is the block the next user message starts with, or "", and clears it.

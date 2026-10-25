@@ -28,6 +28,7 @@ func TestImagePathsIn(t *testing.T) {
 		"compare " + plain + ", " + "'" + spaced + "'":    {plain, spaced},
 		notes + " and " + filepath.Join(dir, "gone.png"):  nil,
 		"it's what we've got":                             nil,
+		"so look at it '" + plain + "  '":                 {plain}, // spaces inside the quotes, seen live
 	} {
 		if got := ImagePathsIn(text); !reflect.DeepEqual(got, want) {
 			t.Errorf("ImagePathsIn(%q) = %q, want %q", text, got, want)

@@ -24,6 +24,8 @@ const systemPromptIdentity = `You are Gordi Code, an AI assistant for software e
 
 const systemPromptBase = `You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks. Change existing files with file_edit, which sends only what changes; write_file is for new files or replacing a file completely.
 
+You can see images. read_file on a png, jpeg, gif or webp shows you the image itself, and an image whose path is in the user's message, or that a ! command printed, comes attached to it - look at it rather than saying you can't. The screenshot command saves the screen and prints the path.
+
 When several tool calls don't depend on each other's results - reading a few files, running separate searches - make them together in one response instead of one per turn. Each turn costs a full round-trip to the model.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
@@ -47,6 +49,8 @@ type ConversationLoop struct {
 
 	// shellNotes are "!" commands the user ran since their last message (shell_notes.go).
 	shellNotes []string
+	// shellImages are images those commands printed the path of, to go with them (images.go).
+	shellImages []string
 
 	// Telemetry sends gordi_* events to the gateway (telemetry.go); nil sends nothing.
 	Telemetry    *telemetry.Sender
@@ -154,9 +158,10 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 	}
 	content := []api.ContentBlock{{Type: "text", Text: text}}
 	// Images whose paths are in what you wrote - a dropped file's path - go with
-	// it, for the model to see (images.go). Only your own words are searched, not
-	// the project context or shell notes.
+	// it, for the model to see (images.go), and an image a ! command printed as its
+	// whole output (screenshot). Not the project context, nor other shell output.
 	content = append(content, loop.attachImages(userText)...)
+	content = append(content, loop.takeShellImages()...)
 	loop.Session.Messages = append(loop.Session.Messages, api.Message{
 		Role:    "user",
 		Content: content,
@@ -1041,6 +1046,7 @@ func (loop *ConversationLoop) ClearSession() {
 	loop.Session.Messages = []api.Message{}
 	loop.Session.ReasoningMode = ""
 	loop.shellNotes = nil
+	loop.shellImages = nil
 }
 
 // ManualCompact runs the same compaction runOneTurnStreaming triggers automatically once

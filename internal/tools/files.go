@@ -23,7 +23,7 @@ func ReadFileTool() api.Tool {
 	return api.Tool{
 		Name: "read_file",
 		Description: fmt.Sprintf(
-			"Read the contents of a file from the filesystem. Files over %s must be read with 'offset'/'limit' instead of all at once — check the size first (e.g. via bash) for anything you suspect is large.",
+			"Read the contents of a file from the filesystem. On an image (png, jpeg, gif, webp) it returns the image itself, for you to look at. Files over %s must be read with 'offset'/'limit' instead of all at once — check the size first (e.g. via bash) for anything you suspect is large.",
 			formatBytes(maxDirectReadBytes),
 		),
 		InputSchema: api.InputSchema{

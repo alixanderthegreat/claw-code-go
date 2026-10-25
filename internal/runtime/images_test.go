@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +55,32 @@ func TestReadFileOnAnImageReturnsTheImage(t *testing.T) {
 	}
 	if !loop.ReadFiles[path] && loop.requireReadBeforeWrite(path) != nil {
 		t.Error("reading the image didn't count as reading it")
+	}
+}
+
+// TestShellScreenshotGoesWithItsOutput: "! screenshot" prints one image's path, and that image
+// goes with the note - the model was told the path and couldn't see it. A command that lists
+// several image paths attaches nothing.
+func TestShellScreenshotGoesWithItsOutput(t *testing.T) {
+	dir := t.TempDir()
+	shot := filepath.Join(dir, "shot-140026.png")
+	other := filepath.Join(dir, "b.png")
+	os.WriteFile(shot, []byte("\x89PNG fake"), 0o644)
+	os.WriteFile(other, []byte("\x89PNG fake"), 0o644)
+	loop := newScriptedLoop(&scriptedClient{}, nil)
+
+	loop.NoteShellCommand("ls "+dir, shot+"\n"+other+"\n", nil)
+	loop.appendUserMessage("")
+	if n := countImages(loop.Session.Messages); n != 0 {
+		t.Fatalf("an ls of images attached %d", n)
+	}
+	loop.NoteShellCommand("sleep 10 && screenshot", shot+"\n", nil)
+	loop.appendUserMessage("")
+	msg := loop.Session.Messages[len(loop.Session.Messages)-1]
+	if len(msg.Content) != 2 || msg.Content[1].Type != "image" {
+		t.Fatalf("the screenshot's note: %+v", msg.Content)
+	}
+	if !strings.Contains(loop.systemPrompt(), "You can see images") {
+		t.Error("the system prompt doesn't tell the model it can see")
 	}
 }

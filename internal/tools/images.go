@@ -66,7 +66,7 @@ func ImagePathsIn(text string) []string {
 	var paths []string
 	seen := map[string]bool{}
 	for _, word := range shellWords(text) {
-		word = strings.TrimPrefix(word, "file://")
+		word = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(word), "file://"))
 		if u, err := url.PathUnescape(word); err == nil {
 			word = u
 		}
