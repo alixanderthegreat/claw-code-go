@@ -308,7 +308,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			totalCached += cachedTok
 		}
 
-		if stopReason != "tool_use" {
+		if stopReason != "tool_use" && stopReason != stopRetry {
 			break
 		}
 	}
@@ -476,6 +476,22 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			Role:    "assistant",
 			Content: assistantContent,
 		})
+	}
+
+	// kronk answers a response that failed as a call with a fixed sentence as
+	// its content: one meant for the model, which used to end the turn as if
+	// it were the answer. Tell the model what went wrong and go round again.
+	if hint := kronkFailureHint(textBlocks, len(toolBlocks), loop.Config.MaxTokens); hint != "" {
+		*invalidStreak++
+		if *invalidStreak > maxKronkRetries {
+			events <- TurnEvent{Type: TurnEventError, Err: fmt.Errorf("the model's call failed %d times in a row (%s)", *invalidStreak, strings.TrimSpace(textBlocks[0].Text))}
+			return "", 0, 0, 0, nil
+		}
+		loop.Session.Messages = append(loop.Session.Messages, api.Message{
+			Role:    "user",
+			Content: []api.ContentBlock{{Type: "text", Text: hint}},
+		})
+		return stopRetry, inputTokens, outputTokens, cachedTokens, nil
 	}
 
 	// Execute tools if needed
@@ -670,6 +686,37 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	}
 
 	return stopReason, inputTokens, outputTokens, cachedTokens, nil
+}
+
+// stopRetry is the stop reason for a response kronk failed as a call: the
+// exchange goes on, with a note to the model saying why.
+const stopRetry = "retry"
+
+// maxKronkRetries bounds how many failed calls in a row get another try.
+const maxKronkRetries = 3
+
+// The sentences kronk puts in place of a response's tool calls (kronk
+// sdk/kronk/model/batchgen_finish.go): every call failed to parse, or the
+// response hit max_tokens partway through writing one and the call was dropped.
+const (
+	kronkInvalidToolCall  = "The model produced an invalid tool call. Please try again."
+	kronkLengthTerminated = "Response truncated before completion."
+)
+
+// kronkFailureHint is the note for the model when a response is only one of
+// kronk's failure sentences, or "" when it's a real answer.
+func kronkFailureHint(text []api.ContentBlock, calls, maxTokens int) string {
+	if calls > 0 || len(text) != 1 {
+		return ""
+	}
+	switch strings.TrimSpace(text[0].Text) {
+	case kronkLengthTerminated:
+		return fmt.Sprintf("[Your last response hit the %d-token output limit while writing a tool call, so the call was dropped and nothing ran. "+
+			"Think less before acting, and write anything long in parts: write_file the first part, then add the rest with file_edit, a section at a time.]", maxTokens)
+	case kronkInvalidToolCall:
+		return "[Your last tool call couldn't be read, so nothing ran. Give the tool's arguments as its named parameters, then try again.]"
+	}
+	return ""
 }
 
 const (
