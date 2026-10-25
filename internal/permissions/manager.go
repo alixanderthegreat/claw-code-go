@@ -55,10 +55,11 @@ func (m *Manager) Check(tool, input string) Decision {
 		return d
 	}
 
-	// AcceptEdits: auto-allow read-only and edit tools, ask for bash
+	// AcceptEdits: auto-allow read-only and edit tools, ask for bash. file_edit
+	// was left out, so every edit still asked in the mode named for them.
 	if m.Mode == ModeAcceptEdits {
 		switch tool {
-		case "read_file", "glob", "grep", "write_file":
+		case "read_file", "glob", "grep", "write_file", "file_edit":
 			return DecisionAllow
 		}
 	}
