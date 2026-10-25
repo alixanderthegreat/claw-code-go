@@ -271,7 +271,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		viewBuf += renderHistory(loop.Session.Messages, md)
 	}
 
-	return Model{
+	m := Model{
 		state:    stateInput,
 		textarea: ta,
 		spinner:  s,
@@ -283,6 +283,8 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		tools:    toolsFromHistory(loop.Session.Messages),
 		md:       md,
 	}
+	m.sendModeEvent("start") // the mode this session opens in
+	return m
 }
 
 // Init is the Bubble Tea Init function.
@@ -571,8 +573,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Type == tea.KeyShiftTab && m.state != stateLoginAPIKey {
 		if m.loop.PermManager != nil {
+			from := m.loop.PermMode()
 			m.loop.PermManager.Mode = nextPermMode(m.loop.PermManager.Mode)
 			m.cfg.PermissionMode = m.loop.PermManager.Mode.String()
+			m.sendModeEvent(from)
 		}
 		return m, nil
 	}
@@ -776,6 +780,19 @@ func runShellCommand(command string) tea.Cmd {
 		output, err := tools.ExecuteBash(map[string]any{"command": command})
 		return shellDoneMsg{command: command, output: output, err: err}
 	}
+}
+
+// sendModeEvent records a permission mode switch - from "start" when Gordi opens - so Grafana can
+// tell how long each mode is in force, not just how many turns ran in it.
+func (m Model) sendModeEvent(from string) {
+	if m.loop == nil {
+		return
+	}
+	m.loop.Telemetry.Send("gordi_mode", map[string]any{
+		"session": m.loop.Session.ID,
+		"from":    from,
+		"to":      m.loop.PermMode(),
+	})
 }
 
 // nextPermMode cycles through permission modes in a fixed order, used by the

@@ -26,6 +26,7 @@ const minPrefillSample = 500
 type turnStats struct {
 	start                  time.Time
 	source                 string // "message", or "shell" for a ! command's output on its own
+	permMode               string // the permission mode the turn started in
 	rounds, tools, failed  int
 	retries, compactions   int
 	interjections          int // messages you sent mid-turn that reached the model in it
@@ -37,7 +38,16 @@ func (loop *ConversationLoop) startTurnStats(userText string) {
 	if userText == "" {
 		source = "shell"
 	}
-	loop.stats = turnStats{start: time.Now(), source: source}
+	loop.stats = turnStats{start: time.Now(), source: source, permMode: loop.PermMode()}
+}
+
+// PermMode names the permission mode in force: default, accept-edits, bypass or plan; "none"
+// without a permission manager.
+func (loop *ConversationLoop) PermMode() string {
+	if loop.PermManager == nil {
+		return "none"
+	}
+	return loop.PermManager.Mode.String()
 }
 
 func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelta, input, cached int, stop, failure string, calls, images int) {
@@ -90,13 +100,14 @@ func (loop *ConversationLoop) emitTool(name string, ms int64, failed, trimmed, a
 		loop.stats.failed++
 	}
 	loop.Telemetry.Send("gordi_tool", map[string]any{
-		"session": loop.Session.ID,
-		"tool":    name,
-		"ms":      ms,
-		"failed":  failed,
-		"trimmed": trimmed,
-		"asked":   asked,
-		"denied":  denied,
+		"session":   loop.Session.ID,
+		"tool":      name,
+		"perm_mode": loop.PermMode(),
+		"ms":        ms,
+		"failed":    failed,
+		"trimmed":   trimmed,
+		"asked":     asked,
+		"denied":    denied,
 	})
 }
 
@@ -110,6 +121,7 @@ func (loop *ConversationLoop) emitTurn(outcome string) {
 	loop.Telemetry.Send("gordi_turn", map[string]any{
 		"session":     loop.Session.ID,
 		"source":      s.source,
+		"perm_mode":   s.permMode,
 		"outcome":     outcome,
 		"rounds":      s.rounds,
 		"tools":       s.tools,
