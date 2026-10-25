@@ -65,27 +65,28 @@ func TestUpInsideATypedMultiLineDraft(t *testing.T) {
 	}
 }
 
-// TestEnterIsANewline: Enter breaks the line and sends nothing; Alt+Enter or
-// Ctrl+J (Ctrl+Enter, where the terminal sends a linefeed) sends; Ctrl+U clears.
-func TestEnterIsANewline(t *testing.T) {
+// TestAltEnterIsANewline: Alt+Enter, Ctrl+N and Ctrl+J break the line and send
+// nothing; plain Enter sends; Ctrl+U clears.
+func TestAltEnterIsANewline(t *testing.T) {
 	m := voiceModel("off")
 	m.history = newInputHistory()
 	m.textarea.Focus()
-	m.textarea.SetValue("para one")
-	m = press(m, tea.KeyEnter)
-	if m.textarea.Value() != "para one\n" {
-		t.Fatalf("Enter: %q, want a newline added", m.textarea.Value())
+	for _, k := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlN}, {Type: tea.KeyCtrlJ}} {
+		m.textarea.SetValue("para one")
+		mm, _ := m.Update(k)
+		m = mm.(Model)
+		if m.textarea.Value() != "para one\n" {
+			t.Errorf("%v: %q, want a newline added", k, m.textarea.Value())
+		}
+		if isSendKey(k) {
+			t.Errorf("%v sends", k)
+		}
 	}
 	if m.textarea.SetValue("scrap this"); press(m, tea.KeyCtrlU).textarea.Value() != "" {
 		t.Error("Ctrl+U left the input")
 	}
-	for _, k := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlJ}} {
-		if !isSendKey(k) {
-			t.Errorf("%v doesn't send", k)
-		}
-	}
-	if isSendKey(tea.KeyMsg{Type: tea.KeyEnter}) {
-		t.Error("plain Enter sends")
+	if !isSendKey(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Error("plain Enter doesn't send")
 	}
 }
 

@@ -636,9 +636,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
-	case tea.KeyEnter, tea.KeyCtrlN:
-		// Enter is a newline, so a message can be written in paragraphs; Alt+Enter
-		// sends it (isSendKey). Ctrl+N, the old newline key, still works.
+	case tea.KeyEnter, tea.KeyCtrlN, tea.KeyCtrlJ:
+		// Alt+Enter is a newline (plain Enter sends: isSendKey), and so are Ctrl+N
+		// and Ctrl+J. Enter was the newline for a while; it went back to sending.
 		m.history.Reset()
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -690,12 +690,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// isSendKey reports whether msg sends the input: Alt+Enter, or Ctrl+J, which
-// is what Ctrl+Enter arrives as in terminals that send it as a linefeed. Plain
-// Ctrl+Enter can't be the key: xfce4-terminal (VTE), like most terminals, sends
-// it as the same byte as Enter.
+// isSendKey reports whether msg sends the input: plain Enter. Alt+Enter is the
+// newline - a terminal sends it distinct from Enter, where Ctrl+Enter and
+// Shift+Enter arrive as Enter itself (xfce4-terminal, VTE, like most).
 func isSendKey(msg tea.KeyMsg) bool {
-	return (msg.Type == tea.KeyEnter && msg.Alt && !msg.Paste) || msg.Type == tea.KeyCtrlJ
+	return msg.Type == tea.KeyEnter && !msg.Alt && !msg.Paste
 }
 
 // cursorOnTopRow reports whether the cursor is on the input's first screen row.
@@ -1610,7 +1609,7 @@ func (m Model) View() string {
 	header := m.renderHeader()
 	activity := m.renderActivityRow()
 	divider := dividerStyle.Render(strings.Repeat("─", max(m.width, 0)))
-	hint := statusStyle.Render("Alt+Enter=send  Enter=newline  Ctrl+U=clear  Shift+rightclick='select text'  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
+	hint := statusStyle.Render("Enter=send  Alt+Enter=newline  Ctrl+U=clear  Shift+rightclick='select text'  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
@@ -1740,7 +1739,7 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Input:"),
 		"  "+userLabelStyle.Render("Enter")+"          Send message",
-		"  "+userLabelStyle.Render("Alt+Enter")+"      Send the message (Enter is a newline)",
+		"  "+userLabelStyle.Render("Alt+Enter")+"      New line (Enter sends; Ctrl+N works too)",
 		"  "+userLabelStyle.Render("Ctrl+U")+"         Clear the input",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Input history (from the top row; ←/→ to edit a recalled entry)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
