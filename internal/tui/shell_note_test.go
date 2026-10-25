@@ -31,10 +31,11 @@ func (c *recordingClient) StreamResponse(_ context.Context, req api.CreateMessag
 	return ch, nil
 }
 
-// TestShellOutputReachesTheModelFromTheTUI: "! cmd" in the TUI, then a message - the model is sent
-// the command's output with that message. The runtime's own test passed while this didn't: with
-// project context on - as the TUI always has - the note was built and then dropped.
-func TestShellOutputReachesTheModelFromTheTUI(t *testing.T) {
+// TestShellOutputGetsAReply: "! cmd" in the TUI sends the command's output to
+// the model on its own, and the model answers it, as Claude Code does. It used
+// to wait for the user's next message (and before that, with project context
+// on - as the TUI always has - the note was built and then dropped).
+func TestShellOutputGetsAReply(t *testing.T) {
 	client := &recordingClient{}
 	cfg := &runtime.Config{Model: "m", MaxTokens: 100, ContextWindow: 32768}
 	loop := runtime.NewConversationLoop(cfg, client)
@@ -47,8 +48,9 @@ func TestShellOutputReachesTheModelFromTheTUI(t *testing.T) {
 		mm, _ = m.Update(msg)
 		m = mm.(Model)
 	}
-	mm, _ = m.submitText("what do you see?")
-	m = mm.(Model)
+	if m.state != stateBusy {
+		t.Fatalf("after the command: state %v, want a turn under way", m.state)
+	}
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -63,11 +65,11 @@ func TestShellOutputReachesTheModelFromTheTUI(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if len(client.reqs) == 0 {
-		t.Fatal("no request sent")
+		t.Fatal("no request sent: the command got no reply")
 	}
 	msgs := client.reqs[0].Messages
 	last := msgs[len(msgs)-1].Content[0].Text
-	if !strings.Contains(last, "The Porcaro Halloween Party") || !strings.HasSuffix(last, "what do you see?") {
+	if !strings.HasSuffix(last, "$ echo 24 The Porcaro Halloween Party\n24 The Porcaro Halloween Party") {
 		t.Errorf("the model was sent:\n%s", last)
 	}
 }

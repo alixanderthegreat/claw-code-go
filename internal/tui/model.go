@@ -496,7 +496,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shellDoneMsg:
 		m = m.clearActivity()
-		m.loop.NoteShellCommand(msg.command, msg.output, msg.err) // for the next message
+		m.loop.NoteShellCommand(msg.command, msg.output, msg.err)
 		out := strings.TrimRight(msg.output, "\n")
 		if out != "" {
 			m.viewBuf += out + "\n"
@@ -505,11 +505,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewBuf += errorStyle.Render(fmt.Sprintf("Error: %v\n", msg.err))
 		}
 		m.viewBuf += "\n"
-		m.state = stateInput
-		m.hasStreamContent = false
-		m = m.refreshViewport()
+		// Gordi answers the command's output, as Claude Code does: it goes out
+		// as a message of its own.
+		mm, cmd := m.startTurn("")
+		m = mm.(Model)
 		m.viewport.GotoBottom()
-		return m, nil
+		return m, cmd
 
 	case loginCompleteMsg:
 		return m.handleLoginComplete(msg)
@@ -726,8 +727,7 @@ func (m Model) submitText(text string) (tea.Model, tea.Cmd) {
 
 // startShellCommand runs a "!"-prefixed command directly against the shell,
 // bypassing the model and the permission system entirely (the user typed it
-// themselves). Output is appended to the transcript but never sent to the
-// model as conversation history.
+// themselves). When it finishes, its output goes to the model, which replies.
 func (m Model) startShellCommand(command string) (tea.Model, tea.Cmd) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -1434,10 +1434,16 @@ func (m Model) viewAskUser() string {
 
 // startMessage begins a streaming conversation turn.
 func (m Model) startMessage(text string) (tea.Model, tea.Cmd) {
+	m.viewBuf += userLabelStyle.Render("You") + ": " + text + "\n\n"
+	return m.startTurn(text)
+}
+
+// startTurn sends text, after any "!" output waiting for the model, and streams
+// the reply. text is "" when the "!" output is the whole message.
+func (m Model) startTurn(text string) (tea.Model, tea.Cmd) {
 	m = m.setActivity("Thinking…", true)
 	m.voiceTurnStarted()
 	m.voice.speaker.Stop()
-	m.viewBuf += userLabelStyle.Render("You") + ": " + text + "\n\n"
 	m.viewBuf += assistantLabelStyle.Render("Gordi") + ": "
 	m.state = stateBusy
 	m.hasStreamContent = false

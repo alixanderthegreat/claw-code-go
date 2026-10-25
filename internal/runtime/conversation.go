@@ -130,7 +130,9 @@ func (loop *ConversationLoop) SystemPrompt() string {
 func (loop *ConversationLoop) appendUserMessage(userText string) {
 	text := userText
 	// Commands the user ran with "!" since their last message, ahead of what they now say.
-	if notes := loop.takeShellNotes(); notes != "" {
+	if notes := loop.takeShellNotes(); notes != "" && text == "" {
+		text = notes
+	} else if notes != "" {
 		text = notes + "\n\n" + text
 	}
 	if loop.CtxAssembler != nil {

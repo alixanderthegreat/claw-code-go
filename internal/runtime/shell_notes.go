@@ -8,8 +8,8 @@ import (
 
 // shell_notes.go: what the user ran themselves with "!" in the TUI. The output used to go to the
 // transcript only, so the model never knew: "good" after "! calendar list" got an answer that hadn't
-// seen the calendar. Now each command and its output wait here and go out at the head of the user's
-// next message, as Claude Code does - a "!" alone doesn't start a turn.
+// seen the calendar. Now each command and its output wait here and go to the model when the command
+// finishes, as a message of their own that it answers, as Claude Code does.
 
 // maxShellNoteChars bounds one command's output in the note; the user saw all of it already.
 const maxShellNoteChars = 8000
