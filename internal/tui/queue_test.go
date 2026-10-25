@@ -14,7 +14,7 @@ func typeText(m Model, s string) Model {
 	return m
 }
 
-// TestTypingDuringATurn: the input stays live while a reply streams - keys reach the box, and Enter
+// TestTypingDuringATurn: the input stays live while a reply streams - keys reach the box, and Alt+Enter
 // queues the message instead of being dropped; it's sent the moment the turn ends.
 func TestTypingDuringATurn(t *testing.T) {
 	m := voiceModel("auto")
@@ -26,10 +26,10 @@ func TestTypingDuringATurn(t *testing.T) {
 	if m.textarea.Value() != "/voice off" {
 		t.Fatalf("typing during a turn reached the input as %q", m.textarea.Value())
 	}
-	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 	m = mm.(Model)
 	if m.queued != "/voice off" || m.textarea.Value() != "" || m.state != stateBusy {
-		t.Fatalf("Enter during a turn: queued %q, input %q, state %v", m.queued, m.textarea.Value(), m.state)
+		t.Fatalf("Alt+Enter during a turn: queued %q, input %q, state %v", m.queued, m.textarea.Value(), m.state)
 	}
 
 	// The turn ends: the queued command runs.

@@ -60,3 +60,27 @@ func TestUpInsideATypedMultiLineDraft(t *testing.T) {
 		t.Errorf("↓ back: %q, want the draft", m.textarea.Value())
 	}
 }
+
+// TestEnterIsANewline: Enter breaks the line and sends nothing; Alt+Enter or
+// Ctrl+J (Ctrl+Enter, where the terminal sends a linefeed) sends; Ctrl+U clears.
+func TestEnterIsANewline(t *testing.T) {
+	m := voiceModel("off")
+	m.history = newInputHistory()
+	m.textarea.Focus()
+	m.textarea.SetValue("para one")
+	m = press(m, tea.KeyEnter)
+	if m.textarea.Value() != "para one\n" {
+		t.Fatalf("Enter: %q, want a newline added", m.textarea.Value())
+	}
+	if m.textarea.SetValue("scrap this"); press(m, tea.KeyCtrlU).textarea.Value() != "" {
+		t.Error("Ctrl+U left the input")
+	}
+	for _, k := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlJ}} {
+		if !isSendKey(k) {
+			t.Errorf("%v doesn't send", k)
+		}
+	}
+	if isSendKey(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Error("plain Enter sends")
+	}
+}

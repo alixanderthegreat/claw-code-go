@@ -565,9 +565,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateLoginOAuth:
 		return m.handleLoginOAuthKey(msg)
 	case stateBusy:
-		// The input stays live during a turn: type the next message, and Enter
-		// queues it to send when this turn ends. Everything else falls through
-		// to the input handling below.
+		// The input stays live during a turn: type the next message, and the
+		// send key queues it to send when this turn ends. Everything else falls
+		// through to the input handling below.
+		if isSendKey(msg) {
+			text := strings.TrimSpace(m.textarea.Value())
+			if text == "" {
+				return m, nil
+			}
+			if m.queued != "" {
+				m.queued += "\n\n"
+			}
+			m.queued += text
+			m.textarea.Reset()
+			m.history.Push(text)
+			m.history.Reset()
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -582,23 +596,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.streamCancel()
 			}
 			return m, nil
-		case tea.KeyEnter:
-			text := strings.TrimSpace(m.textarea.Value())
-			if text == "" {
-				return m, nil
-			}
-			if m.queued != "" {
-				m.queued += "\n\n"
-			}
-			m.queued += text
-			m.textarea.Reset()
-			m.history.Push(text)
-			m.history.Reset()
-			return m, nil
 		}
 	}
 
 	// stateInput
+	if isSendKey(msg) {
+		return m.handleSubmit()
+	}
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		if m.voice.rec != nil {
@@ -618,12 +622,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
-	case tea.KeyEnter:
-		// Submit the message.
-		return m.handleSubmit()
-
-	case tea.KeyCtrlN:
-		// Ctrl+N inserts a real newline into the multi-line input.
+	case tea.KeyEnter, tea.KeyCtrlN:
+		// Enter is a newline, so a message can be written in paragraphs; Alt+Enter
+		// sends it (isSendKey). Ctrl+N, the old newline key, still works.
 		m.history.Reset()
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -653,6 +654,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
+	case tea.KeyCtrlU:
+		// Clears the whole input, not just the line before the cursor.
+		m.textarea.Reset()
+		m.history.Reset()
+		return m, nil
+
 	case tea.KeyPgUp, tea.KeyPgDown:
 		// Scroll the conversation viewport.
 		var cmd tea.Cmd
@@ -667,6 +674,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 	}
+}
+
+// isSendKey reports whether msg sends the input: Alt+Enter, or Ctrl+J, which
+// is what Ctrl+Enter arrives as in terminals that send it as a linefeed. Plain
+// Ctrl+Enter can't be the key: xfce4-terminal (VTE), like most terminals, sends
+// it as the same byte as Enter.
+func isSendKey(msg tea.KeyMsg) bool {
+	return (msg.Type == tea.KeyEnter && msg.Alt && !msg.Paste) || msg.Type == tea.KeyCtrlJ
 }
 
 // cursorOnTopRow reports whether the cursor is on the input's first screen row.
@@ -1567,7 +1582,7 @@ func (m Model) View() string {
 	header := m.renderHeader()
 	activity := m.renderActivityRow()
 	divider := dividerStyle.Render(strings.Repeat("─", max(m.width, 0)))
-	hint := statusStyle.Render("Enter=send  Shift+rightclick='select text' Ctrl+N=newline  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
+	hint := statusStyle.Render("Alt+Enter=send  Enter=newline  Ctrl+U=clear  Shift+rightclick='select text'  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
@@ -1697,7 +1712,8 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Input:"),
 		"  "+userLabelStyle.Render("Enter")+"          Send message",
-		"  "+userLabelStyle.Render("Ctrl+N")+"         Insert newline (multi-line input)",
+		"  "+userLabelStyle.Render("Alt+Enter")+"      Send the message (Enter is a newline)",
+		"  "+userLabelStyle.Render("Ctrl+U")+"         Clear the input",
 		"  "+userLabelStyle.Render("↑ / ↓")+"          Input history (from the top row; ←/→ to edit a recalled entry)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
 		"  "+userLabelStyle.Render("Ctrl+O")+"         Every tool call in full: inputs and results (Esc closes)",
