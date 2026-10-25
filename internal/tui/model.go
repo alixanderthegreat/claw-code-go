@@ -848,6 +848,12 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 	case "/status":
 		return m.handleStatus()
 
+	case "/card":
+		// What the model is sent ahead of your next message (runtime/card.go).
+		m.viewBuf += renderBlock(statusStyle, m.loop.CardText())
+		m = m.refreshViewport()
+		return m, nil
+
 	case "/init":
 		return m.handleInit()
 
@@ -1723,6 +1729,7 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("/init")+"                           Create .claude/settings.json",
 		"  "+userLabelStyle.Render("/theme")+" dark|light               Switch TUI color theme",
 		"  "+userLabelStyle.Render("/status")+"                         Show model/provider/session info",
+		"  "+userLabelStyle.Render("/card")+"                           Show what the model is sent: each part's size, the system prompt, the summary",
 		"  "+userLabelStyle.Render("/cost")+"                           Show token usage this session",
 		"",
 		statusStyle.Render("Session"),

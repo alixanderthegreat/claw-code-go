@@ -167,9 +167,34 @@ func MemoryDir() string {
 
 // Stable is the system prompt's context block: instructions, skills, memory.
 func Stable(workDir string) string {
+	sec := StableSections(workDir)
 	var sections []string
+	for _, s := range []string{sec.Instructions, sec.Skills, sec.Memory} {
+		if s != "" {
+			sections = append(sections, s)
+		}
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+// Sections is Stable's text in its three parts, with what each was made from - for the
+// card (claw-code-go's /card and gordi_card), which reports their sizes.
+type Sections struct {
+	Instructions, Skills, Memory string
+	InstructionFiles             []string // the files read, ~-relative
+	SkillCount, MemoryLines      int
+}
+
+// StableSections builds Stable's parts.
+func StableSections(workDir string) Sections {
+	var sec Sections
 	if ins := Instructions(workDir); ins != "" {
-		sections = append(sections, "# Instructions\n\nFollow these; the ones further down are closer to this project and win.\n\n"+ins)
+		sec.Instructions = "# Instructions\n\nFollow these; the ones further down are closer to this project and win.\n\n" + ins
+	}
+	for _, p := range instructionPaths(workDir) {
+		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			sec.InstructionFiles = append(sec.InstructionFiles, tildePath(p))
+		}
 	}
 	if skills := Skills(workDir); len(skills) > 0 {
 		var b strings.Builder
@@ -177,7 +202,8 @@ func Stable(workDir string) string {
 		for _, s := range skills {
 			fmt.Fprintf(&b, "\n- %s: %s (%s)", s.Name, s.Description, tildePath(s.Path))
 		}
-		sections = append(sections, b.String())
+		sec.Skills = b.String()
+		sec.SkillCount = len(skills)
 	}
 	dir := MemoryDir()
 	index := ""
@@ -194,11 +220,16 @@ func Stable(workDir string) string {
 		"update or remove a memory that turns out wrong. Read a memory's file when its line is relevant."
 	if index != "" {
 		mem += "\n\nMEMORY.md:\n" + index
+		for _, line := range strings.Split(index, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+				sec.MemoryLines++
+			}
+		}
 	} else {
 		mem += "\n\n(No memories yet.)"
 	}
-	sections = append(sections, mem)
-	return strings.Join(sections, "\n\n")
+	sec.Memory = mem
+	return sec
 }
 
 // StableMtimes fingerprints everything Stable reads, so a cache knows when to rebuild it.

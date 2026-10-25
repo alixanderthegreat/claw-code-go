@@ -49,8 +49,9 @@ type ConversationLoop struct {
 	shellNotes []string
 
 	// Telemetry sends gordi_* events to the gateway (telemetry.go); nil sends nothing.
-	Telemetry *telemetry.Sender
-	stats     turnStats
+	Telemetry    *telemetry.Sender
+	stats        turnStats
+	lastCardHash string // the system prompt's fingerprint last turn (card.go)
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -273,6 +274,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	loop.closeDanglingToolUses()
 	loop.startTurnStats(userText)
 	loop.appendUserMessage(userText)
+	loop.emitCard()
 
 	var totalInput, totalOutput, totalCached int
 	// invalidStreak counts invalid tool calls in a row across the whole
