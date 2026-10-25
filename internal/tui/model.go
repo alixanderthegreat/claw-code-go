@@ -498,7 +498,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellDoneMsg:
 		m = m.clearActivity()
 		m.loop.NoteShellCommand(msg.command, msg.output, msg.err)
-		out := strings.TrimRight(msg.output, "\n")
+		out := printable(strings.TrimRight(msg.output, "\n"))
 		if out != "" {
 			m.viewBuf += out + "\n"
 		}
@@ -1845,17 +1845,17 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 			}
 			switch ev.Type {
 			case runtime.TurnEventTextDelta:
-				return streamDeltaMsg{text: ev.Text}
+				return streamDeltaMsg{text: printable(ev.Text)}
 			case runtime.TurnEventThinkingDelta:
-				return streamThinkingMsg{text: ev.Text}
+				return streamThinkingMsg{text: printable(ev.Text)}
 			case runtime.TurnEventToolStart:
-				return streamToolMsg{name: ev.ToolName, input: ev.ToolInput, args: ev.ToolArgs}
+				return streamToolMsg{name: ev.ToolName, input: printable(ev.ToolInput), args: ev.ToolArgs}
 			case runtime.TurnEventToolDraft:
 				return streamToolDraftMsg{key: "draft " + ev.ToolName, text: draftLine(ev.ToolName, ev.ToolInput, ev.DraftBytes)}
 			case runtime.TurnEventToolProgress:
 				return streamToolDraftMsg{key: "progress " + ev.ToolName, text: progressLine(ev.ToolName, ev.ToolInput)}
 			case runtime.TurnEventToolDone:
-				return streamToolDoneMsg{name: ev.ToolName, result: ev.ToolResult, failed: ev.ToolFailed}
+				return streamToolDoneMsg{name: ev.ToolName, result: printable(ev.ToolResult), failed: ev.ToolFailed}
 			case runtime.TurnEventUsage:
 				return streamUsageMsg{inputTokens: ev.InputTokens, outputTokens: ev.OutputTokens, cachedTokens: ev.CachedTokens}
 			case runtime.TurnEventDone:

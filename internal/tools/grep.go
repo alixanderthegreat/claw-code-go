@@ -2,15 +2,25 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"claw-code-go/internal/api"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxGrepResults = 1000
+
+// maxGrepLine bounds one matching line in the output: a minified file's single line is a match.
+const maxGrepLine = 500
+
+// errBinary marks a file grep skips, as grep -I does: an MP3 in a searched folder used to come
+// back as "matches" of raw bytes, which the model can't use and which garbled the TUI.
+var errBinary = errors.New("binary file")
 
 // GrepTool returns the tool definition for grep file search.
 func GrepTool() api.Tool {
@@ -61,6 +71,7 @@ func ExecuteGrep(input map[string]any) (string, error) {
 	}
 
 	var results []string
+	binaries := 0
 
 	info, err := os.Stat(searchPath)
 	if err != nil {
@@ -89,6 +100,10 @@ func ExecuteGrep(input map[string]any) (string, error) {
 			}
 
 			fileResults, err := grepFile(re, path)
+			if err == errBinary {
+				binaries++
+				return nil
+			}
 			if err != nil {
 				return nil // Skip unreadable files
 			}
@@ -105,19 +120,29 @@ func ExecuteGrep(input map[string]any) (string, error) {
 		}
 	} else {
 		fileResults, err := grepFile(re, searchPath)
+		if err == errBinary {
+			return "", fmt.Errorf("grep: %s is a binary file", searchPath)
+		}
 		if err != nil {
 			return "", fmt.Errorf("grep: %w", err)
 		}
 		results = fileResults
 	}
 
+	skipped := ""
+	if binaries > 0 {
+		skipped = fmt.Sprintf("(%d binary files skipped)", binaries)
+	}
 	if len(results) == 0 {
-		return fmt.Sprintf("No matches found for pattern: %s", pattern), nil
+		return strings.TrimSpace(fmt.Sprintf("No matches found for pattern: %s %s", pattern, skipped)), nil
 	}
 
 	output := strings.Join(results, "\n")
 	if len(results) >= maxGrepResults {
 		output += fmt.Sprintf("\n... [truncated at %d results]", maxGrepResults)
+	}
+	if skipped != "" {
+		output += "\n" + skipped
 	}
 
 	return output, nil
@@ -131,6 +156,15 @@ func grepFile(re *regexp.Regexp, path string) ([]string, error) {
 	}
 	defer f.Close()
 
+	head := make([]byte, 8192)
+	n, _ := f.Read(head)
+	if isBinary(head[:n]) {
+		return nil, errBinary
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, err
+	}
+
 	var results []string
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
@@ -139,9 +173,31 @@ func grepFile(re *regexp.Regexp, path string) ([]string, error) {
 		lineNum++
 		line := scanner.Text()
 		if re.MatchString(line) {
+			if len(line) > maxGrepLine {
+				cut := maxGrepLine
+				for cut > 0 && !utf8.RuneStart(line[cut]) {
+					cut--
+				}
+				line = line[:cut] + fmt.Sprintf("... [%d more bytes]", len(line)-cut)
+			}
 			results = append(results, fmt.Sprintf("%s:%d:%s", path, lineNum, line))
 		}
 	}
 
 	return results, scanner.Err()
+}
+
+// isBinary reports whether a file's first bytes are binary: a NUL, or not UTF-8 (allowing for a
+// character cut off at the end of the sample).
+func isBinary(head []byte) bool {
+	if bytes.IndexByte(head, 0) >= 0 {
+		return true
+	}
+	for i := 0; i < 4 && len(head) > 0; i++ {
+		if utf8.Valid(head) {
+			return false
+		}
+		head = head[:len(head)-1]
+	}
+	return !utf8.Valid(head)
 }
