@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -193,6 +194,7 @@ func main() {
 		ctx := context.Background()
 		if err := loop.SendMessage(ctx, *promptFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			loop.Telemetry.Flush(2 * time.Second)
 			os.Exit(1)
 		}
 		saveSessionSilent(cfg.SessionDir, loop)
@@ -242,6 +244,8 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 // mtime. Prints to stderr on failure, matching the name's original "silent unless something's
 // wrong" contract for errors; the resume hint on success is new, not silent by design.
 func saveSessionSilent(dir string, loop *runtime.ConversationLoop) {
+	// Every way out comes through here, so the last turn's telemetry goes too.
+	loop.Telemetry.Flush(2 * time.Second)
 	if err := runtime.SaveSession(dir, loop.Session); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save session: %v\n", err)
 		return

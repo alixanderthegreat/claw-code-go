@@ -89,3 +89,21 @@ func TestNoEventsEndpointTurnsSendingOff(t *testing.T) {
 	var nilSender *Sender
 	nilSender.Send("gordi_run", nil) // a nil Sender drops, without a panic
 }
+
+// TestFlushSendsAtOnce: Flush sends what's queued without waiting for the
+// batch gap, so a process that's exiting doesn't lose its last turn.
+func TestFlushSendsAtOnce(t *testing.T) {
+	FlushGap = time.Hour
+	stub := &gatewayStub{status: http.StatusNoContent}
+	srv := httptest.NewServer(stub)
+	defer srv.Close()
+	s := New(srv.URL + "/v1")
+	s.Send("gordi_run", nil)
+	s.Send("gordi_turn", nil)
+	s.Flush(2 * time.Second)
+	if _, n := stub.count(); n != 2 {
+		t.Errorf("%d events sent by Flush, want 2", n)
+	}
+	var nilSender *Sender
+	nilSender.Flush(time.Second)
+}

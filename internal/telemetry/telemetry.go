@@ -27,10 +27,11 @@ type Event struct {
 
 // Sender queues events for the gateway. A nil *Sender drops everything, so callers needn't check.
 type Sender struct {
-	url  string
-	http *http.Client
-	ch   chan Event
-	off  atomic.Bool
+	url   string
+	http  *http.Client
+	ch    chan Event
+	flush chan chan struct{}
+	off   atomic.Bool
 }
 
 const (
@@ -51,7 +52,7 @@ func New(chatBaseURL string) *Sender {
 	if root == "" {
 		return nil
 	}
-	s := &Sender{url: root + "/events", http: &http.Client{Timeout: 5 * time.Second}, ch: make(chan Event, buffer)}
+	s := &Sender{url: root + "/events", http: &http.Client{Timeout: 5 * time.Second}, ch: make(chan Event, buffer), flush: make(chan chan struct{})}
 	go s.run()
 	return s
 }
@@ -78,11 +79,30 @@ func (s *Sender) Send(name string, fields map[string]any) {
 	}
 }
 
+// Flush sends what's queued, waiting at most wait: for a process about to exit,
+// whose last turn would otherwise be lost with the batch.
+func (s *Sender) Flush(wait time.Duration) {
+	if s == nil || s.off.Load() {
+		return
+	}
+	done := make(chan struct{})
+	select {
+	case s.flush <- done:
+	case <-time.After(wait):
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(wait):
+	}
+}
+
 func (s *Sender) run() {
 	var batch []Event
 	tick := time.NewTicker(FlushGap)
 	defer tick.Stop()
 	for {
+		var done chan struct{}
 		select {
 		case e := <-s.ch:
 			batch = append(batch, e)
@@ -93,9 +113,23 @@ func (s *Sender) run() {
 			if len(batch) == 0 {
 				continue
 			}
+		case done = <-s.flush:
+			for drained := false; !drained; {
+				select {
+				case e := <-s.ch:
+					batch = append(batch, e)
+				default:
+					drained = true
+				}
+			}
 		}
-		s.post(batch)
+		if len(batch) > 0 {
+			s.post(batch)
+		}
 		batch = nil
+		if done != nil {
+			close(done)
+		}
 	}
 }
 
