@@ -480,6 +480,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamErrMsg:
+		// Keep what the turn showed - thinking, text, tool calls - above the note:
+		// Esc used to wipe the screen back to your last message.
+		m = m.closeMarkdown()
+		if m.streamBuf != "" {
+			m.viewBuf += m.streamBuf + "\n\n"
+		}
 		if m.turnCancelled {
 			m.viewBuf += renderBlock(statusStyle, "Cancelled.")
 		} else {
