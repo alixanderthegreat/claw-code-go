@@ -84,3 +84,25 @@ func TestEnterIsANewline(t *testing.T) {
 		t.Error("plain Enter sends")
 	}
 }
+
+// TestCtrlArrowsMoveByWord: Ctrl+←/→ skip words and Ctrl+Backspace deletes
+// one, as in most editors; only Alt did before.
+func TestCtrlArrowsMoveByWord(t *testing.T) {
+	m := voiceModel("off")
+	m.textarea = newInput()
+	m.history = newInputHistory()
+	m.textarea.Focus()
+	m.textarea.SetValue("one two three")
+	m = press(m, tea.KeyCtrlLeft)
+	if c := m.textarea.LineInfo().CharOffset; c != 8 {
+		t.Errorf("Ctrl+← from the end: cursor at %d, want 8, the start of three", c)
+	}
+	m = press(m, tea.KeyCtrlLeft, tea.KeyCtrlRight)
+	if c := m.textarea.LineInfo().CharOffset; c != 7 {
+		t.Errorf("Ctrl+← then Ctrl+→: cursor at %d, want 7, the end of two", c)
+	}
+	m = press(m, tea.KeyCtrlH)
+	if v := m.textarea.Value(); v != "one  three" {
+		t.Errorf("Ctrl+Backspace: %q, want two deleted", v)
+	}
+}

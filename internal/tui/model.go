@@ -233,13 +233,25 @@ type Model struct {
 	cfg  *runtime.Config
 }
 
-// NewModel creates a new TUI model.
-func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
+// newInput is the message box.
+func newInput() textarea.Model {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message or /help..."
 	ta.CharLimit = 8192
 	ta.ShowLineNumbers = false
 	ta.SetHeight(textareaRows)
+	// Word moves on Ctrl+←/→ as well as Alt, and Ctrl+Backspace deletes a word:
+	// it arrives as ^H (ctrl+h), since plain Backspace sends DEL.
+	ta.KeyMap.WordForward.SetKeys("ctrl+right", "alt+right", "alt+f")
+	ta.KeyMap.WordBackward.SetKeys("ctrl+left", "alt+left", "alt+b")
+	ta.KeyMap.DeleteWordBackward.SetKeys("ctrl+h", "alt+backspace", "ctrl+w")
+	ta.KeyMap.DeleteCharacterBackward.SetKeys("backspace")
+	return ta
+}
+
+// NewModel creates a new TUI model.
+func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
+	ta := newInput()
 	// Focus the textarea so the cursor is visible from the first render.
 	// The blink Cmd is returned from Init().
 	ta.Focus() //nolint:errcheck
