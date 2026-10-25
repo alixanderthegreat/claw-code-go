@@ -108,6 +108,14 @@ type MessageDelta struct {
 type UsageDelta struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// What kronk adds to an OpenAI-compatible usage block, for telemetry: how
+	// much of the output was thinking, and how its MTP drafts did.
+	ReasoningTokens     int `json:"-"`
+	DraftTokens         int `json:"-"`
+	DraftAcceptedTokens int `json:"-"`
+	// FinishReason is the server's own reason, before it's mapped to
+	// StopReason: "length" tells a cut-off from an ordinary stop.
+	FinishReason string `json:"-"`
 }
 
 // ContentBlockInfo holds info about a starting content block.

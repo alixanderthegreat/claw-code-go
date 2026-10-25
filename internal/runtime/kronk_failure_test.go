@@ -2,10 +2,16 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"claw-code-go/internal/api"
+	"claw-code-go/internal/telemetry"
 )
 
 // cutOffClient answers with kronk's cut-off sentence `cuts` times, then "done".
@@ -82,5 +88,67 @@ func TestCutOffsGiveUp(t *testing.T) {
 	}
 	if gaveUp == nil || !strings.Contains(gaveUp.Error(), "truncated") {
 		t.Errorf("it ended with error %v, want one naming the cut-off", gaveUp)
+	}
+}
+
+// TestTelemetryOfARetriedTurn: a cut-off then an answer sends two gordi_run
+// events - the first naming the cut-off - and one gordi_turn counting both.
+func TestTelemetryOfARetriedTurn(t *testing.T) {
+	telemetry.FlushGap = 20 * time.Millisecond
+	var mu sync.Mutex
+	var got []telemetry.Event
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var batch []telemetry.Event
+		json.NewDecoder(r.Body).Decode(&batch)
+		mu.Lock()
+		got = append(got, batch...)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := &cutOffClient{cuts: 1}
+	loop := NewConversationLoop(&Config{Model: "test-model", MaxTokens: 8096, ContextWindow: 40960}, client)
+	loop.CtxAssembler = nil
+	loop.Telemetry = telemetry.New(srv.URL + "/v1")
+	events := make(chan TurnEvent, 64)
+	go func() {
+		loop.SendMessageStreaming(context.Background(), "write the HTML report", events)
+		close(events)
+	}()
+	for range events {
+	}
+	var runs []telemetry.Event
+	var turn *telemetry.Event
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && turn == nil {
+		time.Sleep(10 * time.Millisecond)
+		mu.Lock()
+		runs = runs[:0]
+		for i := range got {
+			switch got[i].Name {
+			case "gordi_run":
+				runs = append(runs, got[i])
+			case "gordi_turn":
+				turn = &got[i]
+			}
+		}
+		mu.Unlock()
+	}
+	if turn == nil || len(runs) != 2 {
+		t.Fatalf("runs %d, turn %v", len(runs), turn)
+	}
+	if runs[0].Fields["failure"] != "cut_off" || runs[1].Fields["failure"] != "" {
+		t.Errorf("failures %v, %v", runs[0].Fields["failure"], runs[1].Fields["failure"])
+	}
+	if turn.Fields["rounds"] != 2.0 || turn.Fields["retries"] != 1.0 || turn.Fields["outcome"] != "done" {
+		t.Errorf("turn %+v", turn.Fields)
+	}
+	for _, e := range got {
+		for k, v := range e.Fields {
+			if s, ok := v.(string); ok && len(s) > 80 {
+				t.Errorf("%s.%s is %d chars: telemetry carries names, not content", e.Name, k, len(s))
+			}
+		}
 	}
 }

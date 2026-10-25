@@ -7,6 +7,7 @@ import (
 	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
 	"claw-code-go/internal/serve"
+	"claw-code-go/internal/telemetry"
 	"claw-code-go/internal/tui"
 	"context"
 	"flag"
@@ -119,6 +120,12 @@ func main() {
 	}
 
 	loop := runtime.NewConversationLoop(cfg, realClient)
+	// Client telemetry - gordi_* events through the gateway's /events - for an
+	// OpenAI-compatible base URL, which is where the gateway is. CLAW_TELEMETRY=off
+	// turns it off.
+	if cfg.ProviderName == "openai" {
+		loop.Telemetry = telemetry.New(cfg.BaseURL)
+	}
 
 	// Wire up the permission manager (Phase 11).
 	// CLI --permission-mode flag overrides the config-file value when set to a

@@ -143,6 +143,12 @@ type oaiUsage struct {
 	PromptTokensDetails struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+	// kronk's own: its MTP drafts.
+	DraftTokens         int `json:"draft_tokens"`
+	DraftAcceptedTokens int `json:"draft_accepted_tokens"`
 }
 
 // ----- StreamResponse --------------------------------------------------------
@@ -359,6 +365,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		outputTokens    int
 		inputTokens     int
 		cachedTokens    int
+		extra           api.UsageDelta // kronk's additions to usage, for telemetry
 	)
 
 	for scanner.Scan() {
@@ -384,6 +391,11 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 			inputTokens = chunk.Usage.PromptTokens
 			outputTokens = chunk.Usage.CompletionTokens
 			cachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			extra = api.UsageDelta{
+				ReasoningTokens:     chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+				DraftTokens:         chunk.Usage.DraftTokens,
+				DraftAcceptedTokens: chunk.Usage.DraftAcceptedTokens,
+			}
 		}
 
 		for _, choice := range chunk.Choices {
@@ -523,7 +535,9 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 	send(api.StreamEvent{
 		Type:       api.EventMessageDelta,
 		StopReason: stopReason,
-		Usage:      api.UsageDelta{InputTokens: inputTokens, OutputTokens: outputTokens},
+		Usage: api.UsageDelta{InputTokens: inputTokens, OutputTokens: outputTokens,
+			ReasoningTokens: extra.ReasoningTokens, DraftTokens: extra.DraftTokens,
+			DraftAcceptedTokens: extra.DraftAcceptedTokens, FinishReason: finishReason},
 	})
 	send(api.StreamEvent{Type: api.EventMessageStop})
 }

@@ -5,6 +5,7 @@ import (
 	clawctx "claw-code-go/internal/context"
 	"claw-code-go/internal/mcp"
 	"claw-code-go/internal/permissions"
+	"claw-code-go/internal/telemetry"
 	"claw-code-go/internal/tools"
 	"claw-code-go/internal/usage"
 	"context"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -45,6 +47,10 @@ type ConversationLoop struct {
 
 	// shellNotes are "!" commands the user ran since their last message (shell_notes.go).
 	shellNotes []string
+
+	// Telemetry sends gordi_* events to the gateway (telemetry.go); nil sends nothing.
+	Telemetry *telemetry.Sender
+	stats     turnStats
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -262,6 +268,7 @@ func (loop *ConversationLoop) SendMessage(ctx context.Context, userText string) 
 // callers should close it after this returns.
 func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText string, events chan<- TurnEvent) error {
 	loop.closeDanglingToolUses()
+	loop.startTurnStats(userText)
 	loop.appendUserMessage(userText)
 
 	var totalInput, totalOutput, totalCached int
@@ -281,6 +288,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 				fmt.Fprintf(os.Stderr, "[compact] warning: %v\n", err)
 			} else {
 				loop.Compaction.CompactionCount++
+				loop.stats.compactions++
 				// Prepend a continuation marker to the retained recent messages.
 				contMsg := GetContinuationMessage(summary)
 				loop.Session.Messages = append([]api.Message{contMsg}, loop.Session.Messages...)
@@ -295,6 +303,11 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			// overflowed. Forget it so the next check estimates from the
 			// history itself and compaction can still fire.
 			loop.Compaction.LastInputTokens = 0
+			if ctx.Err() != nil {
+				loop.emitTurn("cancelled")
+			} else {
+				loop.emitTurn("error")
+			}
 			events <- TurnEvent{Type: TurnEventError, Err: err}
 			return err
 		}
@@ -314,6 +327,8 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			break
 		}
 	}
+
+	loop.emitTurn("done")
 
 	// Update compaction state with the latest token counts (Phase 6).
 	loop.Compaction.TotalInputTokens += totalInput
@@ -347,6 +362,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		Stream:    true,
 	}
 
+	runStart := time.Now()
 	ch, err := loop.Client.StreamResponse(ctx, req)
 	if err != nil {
 		return "", 0, 0, 0, fmt.Errorf("stream response: %w", err)
@@ -369,9 +385,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		outputTokens   int
 		cachedTokens   int
 		draft          toolDraftNotifier
+		firstOut       time.Time      // the first thinking, text or call, for time to first token
+		runUsage       api.UsageDelta // kronk's usage, for the gordi_run event
 	)
 
 	for event := range ch {
+		if firstOut.IsZero() && (event.Type == api.EventContentBlockDelta || event.Type == api.EventContentBlockStart) {
+			firstOut = time.Now()
+		}
 		switch event.Type {
 		case api.EventError:
 			return "", 0, 0, 0, fmt.Errorf("stream error: %s", event.ErrorMessage)
@@ -440,6 +461,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		case api.EventMessageDelta:
 			stopReason = event.StopReason
 			outputTokens = event.Usage.OutputTokens
+			runUsage = event.Usage
 
 		case api.EventMessageStop:
 			// stream complete
@@ -483,6 +505,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	// kronk answers a response that failed as a call with a fixed sentence as
 	// its content: one meant for the model, which used to end the turn as if
 	// it were the answer. Tell the model what went wrong and go round again.
+	loop.emitRun(runStart, firstOut, runUsage, inputTokens, cachedTokens, stopReason, kronkFailureKind(textBlocks, len(toolBlocks)), len(toolBlocks))
 	if hint := kronkFailureHint(textBlocks, len(toolBlocks), loop.Config.MaxTokens); hint != "" {
 		*invalidStreak++
 		if *invalidStreak > maxKronkRetries {
@@ -533,6 +556,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			}
 
 			summary := SummarizeToolInput(inputMap)
+			asked := false // a permission box asked you about this call
 
 			// --- Permission check (Phase 5) ---
 			// Not for ask_user: all it does is ask the user, and their answer is the consent -
@@ -560,9 +584,12 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						IsError:   true,
 					}
 					toolResults = append(toolResults, denied)
+					loop.emitTool(tb.name, 0, false, false, false, "rule")
 					continue
 
 				case permissions.DecisionAsk:
+					asked = true
+					askStart := time.Now()
 					replyCh := make(chan PermDecision, 1)
 					select {
 					case events <- TurnEvent{
@@ -582,6 +609,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					case <-ctx.Done():
 						return cancelled(i)
 					}
+					loop.waitedOnYou(askStart)
 
 					switch userDecision {
 					case PermDecisionDeny:
@@ -592,6 +620,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 							IsError:   true,
 						}
 						toolResults = append(toolResults, denied)
+						loop.emitTool(tb.name, 0, false, false, true, "you")
 						continue
 					case PermDecisionDenyAndStop:
 						// The user said no and wants the floor back: end the
@@ -605,6 +634,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 							IsError:   true,
 						})
 						loop.appendToolResults(toolResults, unrunFrom(i+1), toolStoppedNote)
+						loop.emitTool(tb.name, 0, false, false, true, "you_stop")
 						return "user_stopped", inputTokens, outputTokens, cachedTokens, nil
 					case PermDecisionAllowAlways:
 						loop.PermManager.Remember(tb.name, summary, permissions.DecisionAllow, permissions.ScopeAlways)
@@ -631,12 +661,14 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				case <-ctx.Done():
 					return cancelled(i)
 				}
+				askStart := time.Now()
 				var answer string
 				select {
 				case answer = <-replyCh:
 				case <-ctx.Done():
 					return cancelled(i)
 				}
+				loop.waitedOnYou(askStart)
 				toolResults = append(toolResults, api.ContentBlock{
 					Type:      "tool_result",
 					ToolUseID: tb.id,
@@ -651,6 +683,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 				return cancelled(i)
 			}
 
+			toolStart := time.Now()
 			result := loop.ExecuteTool(tb.name, inputMap)
 			result.ToolUseID = tb.id
 			toolResults = append(toolResults, result)
@@ -659,6 +692,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			if len(result.Content) > 0 {
 				resultText = result.Content[0].Text
 			}
+			loop.emitTool(tb.name, time.Since(toolStart).Milliseconds(), result.IsError, strings.Contains(resultText, "[truncated:"), asked, "")
 
 			select {
 			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText, ToolFailed: result.IsError}:
@@ -705,17 +739,29 @@ const (
 	kronkLengthTerminated = "Response truncated before completion."
 )
 
-// kronkFailureHint is the note for the model when a response is only one of
-// kronk's failure sentences, or "" when it's a real answer.
-func kronkFailureHint(text []api.ContentBlock, calls, maxTokens int) string {
+// kronkFailureKind names which of kronk's failure sentences a response is -
+// "cut_off" or "invalid_call" - or "" when it's a real answer.
+func kronkFailureKind(text []api.ContentBlock, calls int) string {
 	if calls > 0 || len(text) != 1 {
 		return ""
 	}
 	switch strings.TrimSpace(text[0].Text) {
 	case kronkLengthTerminated:
+		return "cut_off"
+	case kronkInvalidToolCall:
+		return "invalid_call"
+	}
+	return ""
+}
+
+// kronkFailureHint is the note for the model when a response is only one of
+// kronk's failure sentences, or "" when it's a real answer.
+func kronkFailureHint(text []api.ContentBlock, calls, maxTokens int) string {
+	switch kronkFailureKind(text, calls) {
+	case "cut_off":
 		return fmt.Sprintf("[Your last response hit the %d-token output limit while writing a tool call, so the call was dropped and nothing ran. "+
 			"Think less before acting, and write anything long in parts: write_file the first part, then add the rest with file_edit, a section at a time.]", maxTokens)
-	case kronkInvalidToolCall:
+	case "invalid_call":
 		return "[Your last tool call couldn't be read, so nothing ran. Give the tool's arguments as its named parameters, then try again.]"
 	}
 	return ""
