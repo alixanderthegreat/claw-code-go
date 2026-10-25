@@ -274,7 +274,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		state:    stateInput,
 		textarea: ta,
 		spinner:  s,
-		history:  newInputHistory(),
+		history:  loadInputHistory(historyPath(cfg.SessionDir)),
 		loop:     loop,
 		cfg:      cfg,
 		viewBuf:  viewBuf,

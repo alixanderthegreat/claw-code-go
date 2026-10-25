@@ -1,6 +1,10 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -104,5 +108,41 @@ func TestCtrlArrowsMoveByWord(t *testing.T) {
 	m = press(m, tea.KeyCtrlH)
 	if v := m.textarea.Value(); v != "one  three" {
 		t.Errorf("Ctrl+Backspace: %q, want two deleted", v)
+	}
+}
+
+// TestHistorySurvivesARestart: entries pushed in one run - newlines and all -
+// are there for ↑ in the next.
+func TestHistorySurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input_history.jsonl")
+	first := loadInputHistory(path)
+	first.Push("one")
+	first.Push("two\nlines")
+	first.Push("two\nlines") // a repeat isn't kept twice
+
+	again := loadInputHistory(path)
+	if len(again.entries) != 2 || again.entries[1] != "two\nlines" {
+		t.Fatalf("after a restart: %q", again.entries)
+	}
+	if got := again.Prev(""); got != "two\nlines" {
+		t.Errorf("↑ after a restart: %q", got)
+	}
+}
+
+// TestHistoryFileStaysBounded: a file past twice the cap is cut back to the
+// newest entries when it's loaded.
+func TestHistoryFileStaysBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input_history.jsonl")
+	h := loadInputHistory(path)
+	for i := 0; i < 2*maxHistoryEntries+10; i++ {
+		h.Push(fmt.Sprintf("entry %d", i))
+	}
+	again := loadInputHistory(path)
+	if len(again.entries) != maxHistoryEntries || again.entries[len(again.entries)-1] != fmt.Sprintf("entry %d", 2*maxHistoryEntries+9) {
+		t.Fatalf("%d entries, last %q", len(again.entries), again.entries[len(again.entries)-1])
+	}
+	raw, _ := os.ReadFile(path)
+	if n := strings.Count(string(raw), "\n"); n != maxHistoryEntries {
+		t.Errorf("file has %d lines after the rewrite, want %d", n, maxHistoryEntries)
 	}
 }
