@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1435,6 +1436,15 @@ func (m Model) viewAskUser() string {
 // startMessage begins a streaming conversation turn.
 func (m Model) startMessage(text string) (tea.Model, tea.Cmd) {
 	m.viewBuf += userLabelStyle.Render("You") + ": " + text + "\n\n"
+	// The runtime attaches any image whose path is in the message; say which, since
+	// the projector's first look at one adds seconds before the reply starts.
+	for _, path := range tools.ImagePathsIn(text) {
+		note := "Attached " + filepath.Base(path)
+		if info, err := os.Stat(path); err == nil && info.Size() > tools.MaxImageBytes {
+			note = filepath.Base(path) + " is over 8 MB, not attached"
+		}
+		m.viewBuf += statusStyle.Render(note) + "\n\n"
+	}
 	return m.startTurn(text)
 }
 

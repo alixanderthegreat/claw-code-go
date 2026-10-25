@@ -17,7 +17,22 @@ type ContentBlock struct {
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   []ContentBlock `json:"content,omitempty"`
 	IsError   bool           `json:"is_error,omitempty"`
+
+	// For type == "image": in a user message, or inside a tool_result. The
+	// shape is Anthropic's own; the OpenAI provider turns it into image_url.
+	Source *ImageSource `json:"source,omitempty"`
 }
+
+// ImageSource is an image's bytes, base64-encoded, and its media type.
+type ImageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// ImageTokens is roughly what one image costs the model in prompt tokens:
+// a 1272x1080 screenshot measured ~1,400 on Jumbo (2026-10-25).
+const ImageTokens = 1500
 
 // ToolResult is a convenience wrapper for building tool_result content blocks.
 type ToolResult struct {

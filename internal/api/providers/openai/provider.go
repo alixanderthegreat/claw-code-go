@@ -79,6 +79,37 @@ type oaiMessage struct {
 	Content    *string       `json:"content,omitempty"`
 	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
+	// Parts, when set, is the content instead: text and images, for a user
+	// message that carries an image.
+	Parts []oaiPart `json:"-"`
+}
+
+// oaiPart is one piece of a multi-part content array.
+type oaiPart struct {
+	Type     string       `json:"type"` // "text" or "image_url"
+	Text     string       `json:"text,omitempty"`
+	ImageURL *oaiImageURL `json:"image_url,omitempty"`
+}
+
+type oaiImageURL struct {
+	URL string `json:"url"` // a data: URI
+}
+
+// MarshalJSON writes Parts as the content array when a message has them.
+func (m oaiMessage) MarshalJSON() ([]byte, error) {
+	type plain oaiMessage
+	if len(m.Parts) == 0 {
+		return json.Marshal(plain(m))
+	}
+	return json.Marshal(struct {
+		plain
+		Content []oaiPart `json:"content"`
+	}{plain(m), m.Parts})
+}
+
+// imagePart is an image block as an image_url part.
+func imagePart(b api.ContentBlock) oaiPart {
+	return oaiPart{Type: "image_url", ImageURL: &oaiImageURL{URL: "data:" + b.Source.MediaType + ";base64," + b.Source.Data}}
 }
 
 type oaiTool struct {
@@ -238,12 +269,20 @@ func convertMessages(system string, messages []api.Message) []oaiMessage {
 		switch msg.Role {
 		case "user":
 			// Split text content from tool results; tool results become role "tool".
+			// A tool message is text only, so an image a tool returned (read_file
+			// on an image) follows the tool messages as a user message of its own;
+			// kronk takes that order (tested 2026-10-25).
 			var texts []string
+			var images, toolImages []oaiPart
 			for _, block := range msg.Content {
 				switch block.Type {
 				case "text":
 					if block.Text != "" {
 						texts = append(texts, block.Text)
+					}
+				case "image":
+					if block.Source != nil {
+						images = append(images, imagePart(block))
 					}
 				case "tool_result":
 					content := extractText(block.Content)
@@ -252,9 +291,26 @@ func convertMessages(system string, messages []api.Message) []oaiMessage {
 						Content:    strPtr(content),
 						ToolCallID: block.ToolUseID,
 					})
+					for _, inner := range block.Content {
+						if inner.Type == "image" && inner.Source != nil {
+							toolImages = append(toolImages, imagePart(inner))
+						}
+					}
 				}
 			}
-			if len(texts) > 0 {
+			if len(toolImages) > 0 {
+				result = append(result, oaiMessage{
+					Role:  "user",
+					Parts: append([]oaiPart{{Type: "text", Text: "[The image the tool call above returned]"}}, toolImages...),
+				})
+			}
+			switch {
+			case len(images) > 0:
+				result = append(result, oaiMessage{
+					Role:  "user",
+					Parts: append([]oaiPart{{Type: "text", Text: strings.Join(texts, "\n")}}, images...),
+				})
+			case len(texts) > 0:
 				result = append(result, oaiMessage{
 					Role:    "user",
 					Content: strPtr(strings.Join(texts, "\n")),

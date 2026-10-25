@@ -44,8 +44,14 @@ func EstimateTokens(messages []api.Message) int {
 					total += len(b) / charsPerToken
 				}
 			}
+			if cb.Type == "image" {
+				total += api.ImageTokens
+			}
 			for _, inner := range cb.Content {
 				total += len(inner.Text) / charsPerToken
+				if inner.Type == "image" {
+					total += api.ImageTokens
+				}
 			}
 		}
 	}
@@ -131,6 +137,8 @@ func buildTranscript(prevSummary string, messages []api.Message) string {
 					sb.WriteString(cb.Text)
 					sb.WriteString("\n")
 				}
+			case "image":
+				sb.WriteString("[An image]\n")
 			case "tool_use":
 				fmt.Fprintf(&sb, "[Tool call: %s]\n", cb.Name)
 			case "tool_result":

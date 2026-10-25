@@ -15,6 +15,7 @@ import (
 //	            time to first output, duration, stop and finish reasons, kronk's failure if any
 //	gordi_tool  one tool call: duration, failed, output trimmed, asked you, denied
 //	gordi_turn  one exchange: requests, tools, and its time split into model, tools, and you
+//	gordi_image one image given to the model: from your message or read_file, its size and type
 
 // turnStats accumulates one exchange for its gordi_turn event.
 type turnStats struct {
@@ -33,7 +34,7 @@ func (loop *ConversationLoop) startTurnStats(userText string) {
 	loop.stats = turnStats{start: time.Now(), source: source}
 }
 
-func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelta, input, cached int, stop, failure string, calls int) {
+func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelta, input, cached int, stop, failure string, calls, images int) {
 	ms := time.Since(start).Milliseconds()
 	loop.stats.rounds++
 	loop.stats.modelMs += ms
@@ -61,6 +62,7 @@ func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelt
 		"finish":           u.FinishReason,
 		"failure":          failure,
 		"calls":            calls,
+		"images":           images,
 	})
 }
 

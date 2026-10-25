@@ -151,11 +151,14 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 	if tag := loop.reasoningTag(); tag != "" {
 		text = tag + " " + text
 	}
+	content := []api.ContentBlock{{Type: "text", Text: text}}
+	// Images whose paths are in what you wrote - a dropped file's path - go with
+	// it, for the model to see (images.go). Only your own words are searched, not
+	// the project context or shell notes.
+	content = append(content, loop.attachImages(userText)...)
 	loop.Session.Messages = append(loop.Session.Messages, api.Message{
-		Role: "user",
-		Content: []api.ContentBlock{
-			{Type: "text", Text: text},
-		},
+		Role:    "user",
+		Content: content,
 	})
 }
 
@@ -505,7 +508,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 	// kronk answers a response that failed as a call with a fixed sentence as
 	// its content: one meant for the model, which used to end the turn as if
 	// it were the answer. Tell the model what went wrong and go round again.
-	loop.emitRun(runStart, firstOut, runUsage, inputTokens, cachedTokens, stopReason, kronkFailureKind(textBlocks, len(toolBlocks)), len(toolBlocks))
+	loop.emitRun(runStart, firstOut, runUsage, inputTokens, cachedTokens, stopReason, kronkFailureKind(textBlocks, len(toolBlocks)), len(toolBlocks), countImages(req.Messages))
 	if hint := kronkFailureHint(textBlocks, len(toolBlocks), loop.Config.MaxTokens); hint != "" {
 		*invalidStreak++
 		if *invalidStreak > maxKronkRetries {
@@ -875,6 +878,9 @@ func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) ap
 	case "bash":
 		result, err = tools.ExecuteBash(input)
 	case "read_file":
+		if path, _ := input["path"].(string); tools.ImageMediaType(path) != "" {
+			return loop.readImage(path)
+		}
 		result, err = tools.ExecuteReadFile(input)
 		if err == nil {
 			if path, ok := input["path"].(string); ok {
