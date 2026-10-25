@@ -630,22 +630,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyUp:
-		// Navigate to previous history entry when input is single-line.
-		if !strings.Contains(m.textarea.Value(), "\n") {
-			prev := m.history.Prev(m.textarea.Value())
-			m.textarea.SetValue(prev)
+		// ↑ steps back through history while browsing it, or from the top row
+		// of what's typed; anywhere else it moves the cursor up. Only single-line
+		// input used to reach history, so a recalled entry with a Ctrl+N newline
+		// in it trapped ↑ and ↓ in that entry.
+		if m.history.Navigating() || m.cursorOnTopRow() {
+			m.textarea.SetValue(m.history.Prev(m.textarea.Value()))
 			return m, nil
 		}
-		// Multi-line: let textarea handle cursor movement.
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
 	case tea.KeyDown:
-		// Navigate to next history entry when input is single-line.
-		if !strings.Contains(m.textarea.Value(), "\n") {
-			next := m.history.Next()
-			m.textarea.SetValue(next)
+		// ↓ steps forward while browsing history, back to the draft at the end;
+		// otherwise it only moves the cursor, so it never wipes what's typed.
+		if m.history.Navigating() {
+			m.textarea.SetValue(m.history.Next())
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -666,6 +667,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 	}
+}
+
+// cursorOnTopRow reports whether the cursor is on the input's first screen row.
+func (m Model) cursorOnTopRow() bool {
+	return m.textarea.Line() == 0 && m.textarea.LineInfo().RowOffset == 0
 }
 
 // handleSubmit processes the current textarea value.
@@ -1692,7 +1698,7 @@ func (m Model) viewHelp() string {
 		statusStyle.Render("Input:"),
 		"  "+userLabelStyle.Render("Enter")+"          Send message",
 		"  "+userLabelStyle.Render("Ctrl+N")+"         Insert newline (multi-line input)",
-		"  "+userLabelStyle.Render("↑ / ↓")+"          Navigate input history (single-line mode)",
+		"  "+userLabelStyle.Render("↑ / ↓")+"          Input history (from the top row; ←/→ to edit a recalled entry)",
 		"  "+userLabelStyle.Render("PgUp / PgDn")+"    Scroll conversation",
 		"  "+userLabelStyle.Render("Ctrl+O")+"         Every tool call in full: inputs and results (Esc closes)",
 		"  "+userLabelStyle.Render("Ctrl+R")+"         Start/stop recording - the transcript lands in the input",

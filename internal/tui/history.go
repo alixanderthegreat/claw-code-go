@@ -56,6 +56,11 @@ func (h *inputHistory) Next() string {
 	return h.entries[h.pos]
 }
 
+// Navigating reports whether ↑/↓ are stepping through entries.
+func (h *inputHistory) Navigating() bool {
+	return h.pos != -1
+}
+
 // Reset exits navigation mode. Call after any non-navigation edit.
 func (h *inputHistory) Reset() {
 	h.pos = -1
