@@ -126,6 +126,8 @@ func main() {
 	// turns it off.
 	if cfg.ProviderName == "openai" {
 		loop.Telemetry = telemetry.New(cfg.BaseURL)
+		// Which build this is, so Grafana can tell how far the installed Gordi is behind main.
+		loop.Telemetry.Send("gordi_start", telemetry.Build())
 	}
 
 	// Wire up the permission manager (Phase 11).

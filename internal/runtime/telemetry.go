@@ -16,6 +16,7 @@ import (
 //	            failure if any
 //	gordi_tool  one tool call: duration, failed, output trimmed, asked you, denied
 //	gordi_turn  one exchange: requests, tools, and its time split into model, tools, and you
+//	gordi_start the build: the commit it was installed from (main.go)
 //	gordi_image one image given to the model: from your message or read_file, its size and type
 
 // minPrefillSample is the fewest fresh prompt tokens a request reads for its prefill speed to
