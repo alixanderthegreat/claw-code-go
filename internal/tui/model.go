@@ -166,6 +166,8 @@ type Model struct {
 
 	// every rendered markdown block, by placeholder (markdown.go)
 	md *mdStore
+	// the transcript as last wrapped, so a streamed chunk re-wraps only the tail (wrapcache.go)
+	wrapped *wrapCache
 
 	// the reply's text block still streaming in, rendered as markdown once it's
 	// complete (markdown.go): it starts at streamBuf[mdStart:]
@@ -282,6 +284,7 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 		voice:    newVoiceState(cfg),
 		tools:    toolsFromHistory(loop.Session.Messages),
 		md:       md,
+		wrapped:  &wrapCache{},
 	}
 	m.sendModeEvent("start") // the mode this session opens in
 	return m
@@ -1951,9 +1954,10 @@ func (m Model) refreshViewport() Model {
 	// viewport.Model does not word-wrap on its own (it only splits on "\n"),
 	// so long streamed lines — reasoning text especially, which arrives as
 	// unbroken paragraphs — would run past the terminal edge. Wrap ANSI-aware
-	// so existing style codes (from thinkingStyle etc.) survive the wrap.
+	// so existing style codes (from thinkingStyle etc.) survive the wrap. Only the part that changed
+	// since the last refresh is wrapped again (wrapcache.go): this runs on every streamed chunk.
 	if m.viewport.Width > 0 {
-		content = wrapAtSpaces(content, m.viewport.Width)
+		content = m.wrapped.wrap(content, m.viewport.Width)
 	}
 	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
