@@ -19,9 +19,16 @@ type Session struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 
 	// Compaction state (Phase 6).
-	// CompactionSummary holds the most recent compaction summary text. The
-	// model sees it in the continuation message at the head of the history.
+	// CompactionSummary holds the summary as the model sees it, in the
+	// continuation message at the head of the history: the sections and facts
+	// below, rendered.
 	CompactionSummary string `json:"compaction_summary,omitempty"`
+	// CompactionSections holds one summary per compaction, oldest first. A new
+	// compaction adds one; it never rewrites the ones before it.
+	CompactionSections []string `json:"compaction_sections,omitempty"`
+	// CompactionFacts holds exact details - addresses, names, ids, numbers,
+	// decisions - carried word for word from compaction to compaction.
+	CompactionFacts []string `json:"compaction_facts,omitempty"`
 	// CompactionCount is the number of times this session has been compacted.
 	CompactionCount int `json:"compaction_count,omitempty"`
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"claw-code-go/internal/api"
@@ -109,16 +110,20 @@ func collectStreamText(ch <-chan api.StreamEvent) (string, error) {
 }
 
 // buildTranscript constructs a plain-text transcript of the messages suitable
-// for submission to the summarization model.
-// A previous compaction's summary, if any, is written in whole ahead of them.
-func buildTranscript(prevSummary string, messages []api.Message) string {
+// for submission to the summarization model, asking for a summary of about
+// words words. A previous compaction's summary, if any, is written in whole
+// ahead of them, as context: it is kept as it is, so the new summary covers
+// only what came after it.
+func buildTranscript(prevSummary string, messages []api.Message, words int) string {
 	var sb strings.Builder
-	sb.WriteString("Please provide a concise but thorough summary of the following conversation. ")
-	sb.WriteString("Preserve all important technical details: file paths modified, commands run, ")
+	fmt.Fprintf(&sb, "Summarize the following conversation in at most %d words. ", words)
+	sb.WriteString("Preserve the important details: file paths modified, commands run, ")
 	sb.WriteString("decisions made, errors encountered, and the current state of any ongoing work. ")
-	sb.WriteString("The summary will replace the conversation history and must be self-contained.\n\n")
+	sb.WriteString("The summary will replace the conversation history and must be self-contained. ")
+	sb.WriteString(factsRequest + "\n\n")
 	if prevSummary != "" {
-		sb.WriteString("The conversation was summarized before; fold that summary into yours.\n\n")
+		sb.WriteString("The conversation was summarized before. That summary is kept as it is: don't repeat it, ")
+		sb.WriteString("summarize only the conversation after it.\n\n")
 		sb.WriteString("---EARLIER SUMMARY---\n")
 		sb.WriteString(prevSummary)
 		sb.WriteString("\n---END EARLIER SUMMARY---\n\n")
@@ -160,17 +165,42 @@ func buildTranscript(prevSummary string, messages []api.Message) string {
 // writes the summary: thinking counts against the cap but never reaches it.
 const compactSummaryMaxTokens = 4096
 
-// compactInstruction is the turn added to the end of the conversation to ask
-// for its summary.
-const compactInstruction = "[System: This conversation is about to be compacted to stay within context limits. " +
-	"Write a concise but thorough summary of it so far, to replace the history. Preserve all important technical " +
-	"details: file paths read or modified, commands run, decisions made, errors encountered, and the current state " +
-	"of any ongoing work, including what was about to happen next. It must be self-contained. Reply with the " +
-	"summary as plain text only - do not call any tools.]"
+// compactInstructionPrefix opens the turn added to the end of the conversation
+// to ask for its summary; compactInstruction completes it.
+const compactInstructionPrefix = "[System: This conversation is about to be compacted to stay within context limits. "
+
+// factsRequest asks for the exact details to carry forward, under a FACTS:
+// line that splitSummary finds.
+const factsRequest = "After the summary, write a line that says FACTS: and then, one per line starting with \"- \", " +
+	"every exact detail worth keeping word for word: email addresses, names, numbers, ids, URLs, file paths, dates, " +
+	"decisions made and what the user asked for. Copy each one exactly as it was written. Leave out any already " +
+	"listed in the earlier summary."
+
+// compactInstruction asks for a summary of about words words of everything
+// after the earlier summary, which is kept as it is.
+//
+// Asking for a "concise" summary of the whole history, earlier summary
+// included, made every fact from before it compete again for a shrinking
+// space: one session's summary went from 513 tokens to 290 over 28
+// compactions, and three days of work came down to its last task.
+func compactInstruction(words int) string {
+	return compactInstructionPrefix + fmt.Sprintf("Summarize it in at most %d words, to replace the history. ", words) +
+		"If it begins with a summary of earlier history, that summary is kept as it is: don't repeat it, summarize " +
+		"only what came after it. Preserve the important details: file paths read or modified, commands run, " +
+		"decisions made, errors encountered, and the current state of any ongoing work, including what was about to " +
+		"happen next. It must be self-contained. " + factsRequest + " Reply with plain text only - do not call any tools.]"
+}
+
+// summaryWords sizes a summary to the history it replaces: about a tenth of
+// its tokens, as words, within bounds.
+func summaryWords(messages []api.Message) int {
+	words := EstimateTokens(messages) * 3 / 40
+	return min(max(words, 150), 600)
+}
 
 // CompactSession summarizes the session's message history by calling the model,
-// stores the summary in the session, and trims the message list to what
-// retainRecent keeps. Returns the summary text.
+// adds the summary to the session's earlier ones, and trims the message list to
+// what retainRecent keeps. Returns the whole summary, as the model will see it.
 //
 // It asks for the summary at the end of the conversation itself, sent with the
 // same system prompt and tools as every turn, so the server serves the whole
@@ -180,14 +210,25 @@ const compactInstruction = "[System: This conversation is about to be compacted 
 // scratch and took a cache entry from another caller (Mary's, on 2026-10-23).
 // The transcript stays as the fallback for when that request fails or comes
 // back without text, e.g. a model that answered with a tool call.
+//
+// Each compaction adds a section and never rewrites the earlier ones, and the
+// exact details (CompactionFacts) are carried word for word. The addresses and
+// links the user typed are copied by code, so they survive even when the model
+// leaves them out or misspells them.
 func CompactSession(ctx context.Context, client api.APIClient, cfg *Config, session *Session, system string, tools []api.Tool) (string, error) {
 	if len(session.Messages) == 0 {
 		return "", nil
 	}
+	// A session saved before sections existed carries its summary as one.
+	if len(session.CompactionSections) == 0 && session.CompactionSummary != "" {
+		session.CompactionSections = []string{session.CompactionSummary}
+	}
 
+	history := withoutContinuation(session.Messages)
+	words := summaryWords(history)
 	messages := make([]api.Message, len(session.Messages), len(session.Messages)+1)
 	copy(messages, session.Messages)
-	messages = append(messages, api.Message{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: compactInstruction}}})
+	messages = append(messages, api.Message{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: compactInstruction(words)}}})
 	summary, err := requestSummary(ctx, client, api.CreateMessageRequest{
 		Model:     cfg.Model,
 		MaxTokens: compactSummaryMaxTokens,
@@ -197,10 +238,9 @@ func CompactSession(ctx context.Context, client api.APIClient, cfg *Config, sess
 		Stream:    true,
 	})
 	if err != nil || strings.TrimSpace(summary) == "" {
-		// The previous summary goes in whole: the history being summarized only
-		// starts where it left off, so leaving it out (or truncating it like any
-		// other long text) would drop everything it covered.
-		transcript := buildTranscript(session.CompactionSummary, session.Messages)
+		// The previous summary goes in whole, as context for where this part
+		// of the history starts.
+		transcript := buildTranscript(session.CompactionSummary, history, words)
 		summary, err = requestSummary(ctx, client, api.CreateMessageRequest{
 			Model:     cfg.Model,
 			MaxTokens: compactSummaryMaxTokens,
@@ -215,11 +255,183 @@ func CompactSession(ctx context.Context, client api.APIClient, cfg *Config, sess
 		}
 	}
 
-	session.CompactionSummary = summary
-	session.CompactionCount++
-	session.Messages = retainRecent(session.Messages, cfg)
+	section, facts := splitSummary(summary)
+	recent := retainRecent(history, cfg)
+	facts = append(facts, typedDetails(history[:len(history)-len(recent)])...)
+	if section != "" {
+		session.CompactionSections = append(session.CompactionSections, section)
+	}
+	session.CompactionFacts = addFacts(session.CompactionFacts, facts)
+	foldSections(ctx, client, cfg, session)
+	session.CompactionFacts = capFacts(session.CompactionFacts, cfg)
 
-	return summary, nil
+	session.CompactionSummary = renderSummary(session.CompactionSections, session.CompactionFacts)
+	session.CompactionCount++
+	session.Messages = recent
+
+	return session.CompactionSummary, nil
+}
+
+// continuationPrefix opens the message GetContinuationMessage writes.
+const continuationPrefix = "[System: Conversation history was automatically compacted"
+
+// withoutContinuation returns messages without the continuation messages of
+// earlier compactions: their summary is already in the session's sections,
+// and one kept among the recent messages would put it in front of the model twice.
+func withoutContinuation(messages []api.Message) []api.Message {
+	out := make([]api.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "user" && len(msg.Content) == 1 && msg.Content[0].Type == "text" &&
+			strings.HasPrefix(msg.Content[0].Text, continuationPrefix) {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+// splitSummary splits a summary at its FACTS: line into the summary itself
+// and the facts listed after it, one per line.
+func splitSummary(text string) (string, []string) {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	at := -1
+	for i, line := range lines {
+		if strings.EqualFold(strings.Trim(strings.TrimSpace(line), "*#: "), "facts") {
+			at = i
+		}
+	}
+	if at < 0 {
+		return strings.TrimSpace(text), nil
+	}
+	var facts []string
+	for _, line := range lines[at+1:] {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+			if fact := strings.TrimSpace(line[2:]); fact != "" {
+				facts = append(facts, fact)
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[:at], "\n")), facts
+}
+
+var (
+	emailPattern = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+`)
+	urlPattern   = regexp.MustCompile(`https?://[^\s<>"')\]]+`)
+)
+
+// typedDetails returns the email addresses and links the user typed in
+// messages, exactly as typed - the strings a model is likeliest to retype wrong.
+func typedDetails(messages []api.Message) []string {
+	var out []string
+	for _, msg := range messages {
+		if msg.Role != "user" {
+			continue
+		}
+		for _, cb := range msg.Content {
+			if cb.Type != "text" {
+				continue
+			}
+			for _, url := range urlPattern.FindAllString(cb.Text, -1) {
+				out = append(out, strings.TrimRight(url, ".,;:"))
+			}
+			for _, email := range emailPattern.FindAllString(urlPattern.ReplaceAllString(cb.Text, " "), -1) {
+				out = append(out, email)
+			}
+		}
+	}
+	return out
+}
+
+// addFacts appends to facts each new one not already there, word for word.
+func addFacts(facts, more []string) []string {
+	seen := make(map[string]bool, len(facts))
+	for _, f := range facts {
+		seen[f] = true
+	}
+	for _, f := range more {
+		if !seen[f] {
+			seen[f] = true
+			facts = append(facts, f)
+		}
+	}
+	return facts
+}
+
+// summaryBudget is the most, in tokens, the summary's sections and its facts
+// may each take: a share of the compaction threshold, so the summary can't
+// crowd out the history it stands in front of.
+func summaryBudget(cfg *Config, share int) int {
+	return max(compactionThreshold(cfg)/share, 1000)
+}
+
+// capFacts keeps the newest facts that fit their budget.
+func capFacts(facts []string, cfg *Config) []string {
+	budget := summaryBudget(cfg, 16) * charsPerToken
+	start, used := len(facts), 0
+	for start > 0 && used+len(facts[start-1]) <= budget {
+		start--
+		used += len(facts[start])
+	}
+	return facts[start:]
+}
+
+// foldSections keeps the sections within their budget by folding the oldest
+// ones into one shorter section. Only the oldest are ever summarized again; a
+// newer section stays as it was written. If the model can't fold them, the
+// folded text is cut to fit instead.
+func foldSections(ctx context.Context, client api.APIClient, cfg *Config, session *Session) {
+	budget := summaryBudget(cfg, 8) * charsPerToken
+	total := 0
+	for _, s := range session.CompactionSections {
+		total += len(s)
+	}
+	if total <= budget || len(session.CompactionSections) < 2 {
+		return
+	}
+	// Fold the oldest half, and at least two.
+	n := max(len(session.CompactionSections)/2, 2)
+	oldest := strings.Join(session.CompactionSections[:n], "\n\n")
+	words := min(max(len(oldest)/charsPerToken*3/16, 150), 600)
+	folded, err := requestSummary(ctx, client, api.CreateMessageRequest{
+		Model:     cfg.Model,
+		MaxTokens: compactSummaryMaxTokens,
+		Messages: []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf(
+			foldInstruction+"\n\n---EARLIER SECTIONS---\n%s\n---END EARLIER SECTIONS---", words, oldest)}}}},
+		Stream: true,
+	})
+	folded, _ = splitSummary(folded)
+	if err != nil || folded == "" {
+		folded = oldest
+	}
+	if limit := budget / 2; len(folded) > limit {
+		folded = folded[:limit] + " [...]"
+	}
+	session.CompactionSections = append([]string{folded}, session.CompactionSections[n:]...)
+}
+
+// foldInstruction asks for the oldest sections of a summary as one, in at most
+// %d words.
+const foldInstruction = "These are the oldest sections of a running summary of a long conversation, oldest first. " +
+	"Rewrite them as one section of at most %d words, keeping what still matters later: decisions, " +
+	"what was built or changed and where, and anything left unfinished. Reply with the section only, as plain text."
+
+// renderSummary writes the sections and facts as the model reads them.
+func renderSummary(sections, facts []string) string {
+	var sb strings.Builder
+	for i, s := range sections {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(s)
+	}
+	if len(facts) > 0 {
+		sb.WriteString("\n\nExact details from earlier, word for word:\n")
+		for _, f := range facts {
+			sb.WriteString("- " + f + "\n")
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func requestSummary(ctx context.Context, client api.APIClient, req api.CreateMessageRequest) (string, error) {
@@ -301,7 +513,7 @@ func trimToolResults(msg api.Message, maxTokens int) api.Message {
 // compaction event, suitable for prepending to the retained recent messages.
 func GetContinuationMessage(summary string) api.Message {
 	text := fmt.Sprintf(
-		"[System: Conversation history was automatically compacted to stay within context limits.\n\nSummary of prior context:\n%s\n\nContinuing from here.]",
+		continuationPrefix+" to stay within context limits.\n\nSummary of prior context:\n%s\n\nContinuing from here.]",
 		summary,
 	)
 	return api.Message{
