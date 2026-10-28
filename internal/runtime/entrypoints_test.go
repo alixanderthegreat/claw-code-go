@@ -71,7 +71,7 @@ func (c *scriptedClient) StreamResponse(_ context.Context, req api.CreateMessage
 // place or as a transcript.
 func isSummaryRequest(req api.CreateMessageRequest) bool {
 	last := req.Messages[len(req.Messages)-1].Content[0]
-	return last.Type == "text" && (last.Text == compactInstruction || strings.Contains(last.Text, "---CONVERSATION---"))
+	return last.Type == "text" && (strings.HasPrefix(last.Text, compactInstructionPrefix) || strings.Contains(last.Text, "---CONVERSATION---"))
 }
 
 // toolResult returns the tool_result the loop sent back for the scripted call.
@@ -278,7 +278,7 @@ func TestCompactionSummarizesInPlace(t *testing.T) {
 	if req.System != system || len(req.Tools) != len(loop.allTools()) {
 		t.Errorf("summary request didn't carry the turn's own system prompt and tools - no shared prefix to reuse")
 	}
-	if len(req.Messages) != history+1 || req.Messages[history].Content[0].Text != compactInstruction {
+	if len(req.Messages) != history+1 || !strings.HasPrefix(req.Messages[history].Content[0].Text, compactInstructionPrefix) {
 		t.Errorf("summary request should be the history plus one instruction, got %d messages", len(req.Messages))
 	}
 	if loop.systemPrompt() != system {

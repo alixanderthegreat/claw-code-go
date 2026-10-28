@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -103,8 +105,112 @@ func TestRetainRecentLeavesRoomUnderThreshold(t *testing.T) {
 // TestCompactionCarriesSummaryForward: each compaction summarized only the messages
 // left since the last one, so what the earlier summary covered was lost.
 func TestCompactionCarriesSummaryForward(t *testing.T) {
-	got := buildTranscript("earlier: edited internal/runtime/compact.go", nil)
+	got := buildTranscript("earlier: edited internal/runtime/compact.go", nil, 300)
 	if !strings.Contains(got, "earlier: edited internal/runtime/compact.go") {
 		t.Fatalf("previous summary missing from the transcript")
+	}
+}
+
+// summaryClient plays a model that answers each summary request with the next
+// numbered summary and one fact, and a fold request with "folded".
+type summaryClient struct {
+	n        int
+	requests []api.CreateMessageRequest
+}
+
+func (c *summaryClient) StreamResponse(_ context.Context, req api.CreateMessageRequest) (<-chan api.StreamEvent, error) {
+	c.requests = append(c.requests, req)
+	text := "folded"
+	if !strings.HasPrefix(req.Messages[len(req.Messages)-1].Content[0].Text, foldInstruction[:40]) {
+		c.n++
+		text = fmt.Sprintf("worked on step %d\nFACTS:\n- decided option %d", c.n, c.n)
+	}
+	ch := make(chan api.StreamEvent, 8)
+	defer close(ch)
+	ch <- api.StreamEvent{Type: api.EventContentBlockStart, ContentBlock: api.ContentBlockInfo{Type: "text"}}
+	ch <- api.StreamEvent{Type: api.EventContentBlockDelta, Delta: api.Delta{Type: "text_delta", Text: text}}
+	ch <- api.StreamEvent{Type: api.EventContentBlockStop}
+	ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "end_turn"}
+	ch <- api.StreamEvent{Type: api.EventMessageStop}
+	return ch, nil
+}
+
+func say(role, text string) api.Message {
+	return api.Message{Role: role, Content: []api.ContentBlock{{Type: "text", Text: text}}}
+}
+
+// TestCompactionKeepsEarlyFacts: every compaction re-summarized the summary
+// before it, so a detail from early on had to survive being chosen again each
+// time - and an email address given on the second turn was gone, or misspelled,
+// a few compactions later. The address is kept word for word, and every
+// earlier section stays as it was written.
+func TestCompactionKeepsEarlyFacts(t *testing.T) {
+	client := &summaryClient{}
+	loop := NewConversationLoop(&Config{Model: "test-model", MaxTokens: 1024, ContextWindow: 40960, CompactionKeepRecent: 2}, client)
+	loop.Session.Messages = []api.Message{
+		say("user", "send it to soandso@gmail.com, and the doc is at https://example.com/a/b."),
+		say("assistant", "ok"),
+	}
+	for i := 0; i < 12; i++ {
+		loop.Session.Messages = append(loop.Session.Messages, say("user", fmt.Sprintf("next %d", i)), say("assistant", "done"))
+		if _, err := loop.ManualCompact(context.Background()); err != nil {
+			t.Fatalf("compact %d: %v", i, err)
+		}
+	}
+	summary := loop.Session.CompactionSummary
+	for _, want := range []string{"soandso@gmail.com", "https://example.com/a/b", "worked on step 1", "decided option 1", "worked on step 12"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary lost %q after 12 compactions:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "https://example.com/a/b.") {
+		t.Errorf("the link kept the sentence's full stop")
+	}
+	if n := strings.Count(loop.Session.Messages[0].Content[0].Text, continuationPrefix); n != 1 {
+		t.Errorf("history opens with %d continuation markers, want 1", n)
+	}
+	for _, msg := range loop.Session.Messages[1:] {
+		if strings.HasPrefix(msg.Content[0].Text, continuationPrefix) {
+			t.Errorf("an earlier continuation message was kept: the model would read the summary twice")
+		}
+	}
+}
+
+// TestCompactionFoldsOnlyTheOldest: when the sections outgrow their budget, the
+// oldest are folded into one, and the newest stays as written.
+func TestCompactionFoldsOnlyTheOldest(t *testing.T) {
+	client := &summaryClient{}
+	cfg := &Config{Model: "test-model", MaxTokens: 1024, ContextWindow: 8192, CompactionThreshold: 0.75}
+	big := strings.Repeat("word ", summaryBudget(cfg, 8)*charsPerToken/5/3+1)
+	session := &Session{CompactionSections: []string{big, big, big, "newest"}}
+	foldSections(context.Background(), client, cfg, session)
+	got := session.CompactionSections
+	if len(got) != 3 || got[0] != "folded" || got[len(got)-1] != "newest" {
+		t.Fatalf("sections after folding: %d, first %.20q, last %.20q", len(got), got[0], got[len(got)-1])
+	}
+}
+
+// TestCompactionMigratesOldSummary: a session saved before sections existed
+// keeps its summary as the first section.
+func TestCompactionMigratesOldSummary(t *testing.T) {
+	client := &summaryClient{}
+	loop := NewConversationLoop(&Config{Model: "test-model", MaxTokens: 1024, ContextWindow: 40960}, client)
+	loop.Session.CompactionSummary = "the old summary"
+	loop.Session.Messages = []api.Message{say("user", "hi"), say("assistant", "hello")}
+	if _, err := loop.ManualCompact(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s := loop.Session.CompactionSections; len(s) != 2 || s[0] != "the old summary" {
+		t.Fatalf("sections = %q", s)
+	}
+}
+
+func TestSplitSummary(t *testing.T) {
+	section, facts := splitSummary("did things\n\n**FACTS:**\n- a@b.co\n* path /x/y\nnot a fact\n- ")
+	if section != "did things" || len(facts) != 2 || facts[0] != "a@b.co" || facts[1] != "path /x/y" {
+		t.Fatalf("got %q %q", section, facts)
+	}
+	if section, facts := splitSummary("no facts here"); section != "no facts here" || facts != nil {
+		t.Fatalf("got %q %q", section, facts)
 	}
 }
