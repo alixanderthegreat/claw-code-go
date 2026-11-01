@@ -71,6 +71,21 @@ func ExecuteFileEdit(input map[string]any) (string, error) {
 	content := string(data)
 	replaceAll, _ := input["replace_all"].(bool)
 	count := strings.Count(content, oldString)
+	if count == 0 && !replaceAll {
+		// The right lines with different indentation or trailing spaces: apply it when exactly
+		// one place matches, in the file's own indentation. Two places, or a line that differs
+		// in more than whitespace, still refuse.
+		if start, end, n := looseMatch(content, oldString); n == 1 {
+			matched := content[start:end]
+			repl := reindent(strings.TrimSuffix(newString, "\n"), firstNonBlank(matched), firstNonBlank(oldString))
+			if err := os.WriteFile(filePath, []byte(content[:start]+repl+content[end:]), 0o644); err != nil {
+				return "", fmt.Errorf("file_edit: write: %w", err)
+			}
+			return fmt.Sprintf("Successfully edited %s (matched ignoring each line's leading and trailing whitespace)", filePath), nil
+		} else if n > 1 {
+			return "", fmt.Errorf("file_edit: old_string matches %d places in %s once whitespace is ignored - add surrounding lines to make it unique", n, filePath)
+		}
+	}
 	if count == 0 {
 		hint := "copy it exactly from read_file's output, whitespace and indentation included"
 		if strings.Contains(content, strings.TrimSpace(oldString)) {
