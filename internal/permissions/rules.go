@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -137,4 +138,23 @@ func RulesetFromLists(allowedTools, blockedTools []string) *Ruleset {
 		rs.Rules = append(rs.Rules, Rule{Tool: tool, Decision: DecisionDeny})
 	}
 	return rs
+}
+
+// LoadLayered reads the user's rules (userPath, e.g. ~/.config/claw-code-go/settings.json) and
+// the project's (projectPath, .claude/settings.json), in the same format. The user's come first,
+// so with first-match-wins a project can't allow what the user denied, wherever claw-code-go is
+// started. A missing file is an empty layer; an empty userPath skips that layer.
+func LoadLayered(userPath, projectPath string) (*Ruleset, error) {
+	rs := &Ruleset{}
+	for _, path := range []string{userPath, projectPath} {
+		if path == "" {
+			continue
+		}
+		layer, err := LoadRuleset(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		rs.Rules = append(rs.Rules, layer.Rules...)
+	}
+	return rs, nil
 }

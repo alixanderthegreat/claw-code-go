@@ -574,7 +574,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			// Not for ask_user: all it does is ask the user, and their answer is the consent -
 			// asking permission to ask hid the question in a box that cut it short.
 			if loop.PermManager != nil && tb.name != "ask_user" {
-				decision := loop.PermManager.Check(tb.name, summary)
+				decision := loop.PermManager.Check(tb.name, RuleInput(inputMap))
 
 				// Plan mode: describe without executing.
 				if loop.PermManager.Mode == permissions.ModePlan {
@@ -982,8 +982,23 @@ func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) ap
 // used to just json.Marshal the whole input map, which both showed the raw {"command":...}
 // wrapper instead of the command itself AND rendered "&&" as "&&" (Go's json.Marshal
 // HTML-escapes by default) - a real, ugly bug found live 2026-09-16.
+// RuleInput is the text permission rules match against: the same field SummarizeToolInput shows,
+// but whole. A rule's pattern past the summary's 300 characters (a long command with "git push"
+// at the end) must still match.
+func RuleInput(input map[string]any) string {
+	for _, key := range summaryKeys {
+		if v, ok := input[key].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// summaryKeys are the input fields that describe a tool call, in the order they're looked for.
+var summaryKeys = []string{"command", "path", "file_path", "pattern", "url", "query", "question"}
+
 func SummarizeToolInput(input map[string]any) string {
-	for _, key := range []string{"command", "path", "file_path", "pattern", "url", "query", "question"} {
+	for _, key := range summaryKeys {
 		if v, ok := input[key].(string); ok {
 			if len(v) > 300 {
 				return v[:300] + "..."
