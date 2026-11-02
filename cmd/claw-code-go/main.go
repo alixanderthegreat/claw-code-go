@@ -144,8 +144,15 @@ func main() {
 	}
 	cfg.PermissionMode = permMode.String() // normalise back into Config
 
-	ruleset, rErr := permissions.LoadRuleset(".claude/settings.json")
+	// The user's rules (~/.config/claw-code-go/settings.json) apply wherever claw-code-go starts,
+	// ahead of the project's .claude/settings.json.
+	userRules := ""
+	if dir, err := os.UserConfigDir(); err == nil {
+		userRules = filepath.Join(dir, "claw-code-go", "settings.json")
+	}
+	ruleset, rErr := permissions.LoadLayered(userRules, ".claude/settings.json")
 	if rErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: permission rules: %v; using none\n", rErr)
 		ruleset = &permissions.Ruleset{}
 	}
 	// Merge allowedTools/blockedTools from layered config into the ruleset.

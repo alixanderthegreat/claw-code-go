@@ -32,7 +32,7 @@ func NewManager(mode PermissionMode, rules *Ruleset) *Manager {
 //     tool - the exact shape unattended dispatch needs, e.g. deny web_fetch/
 //     web_search while still allowing bash/read/write/edit with no prompting)
 //   - Plan             → always Deny
-//   - Otherwise        → consult session cache, then ruleset, then Ask
+//   - Otherwise        → a deny rule, then the session cache, then the ruleset, then Ask
 func (m *Manager) Check(tool, input string) Decision {
 	switch m.Mode {
 	case ModeBypassPermissions:
@@ -41,6 +41,12 @@ func (m *Manager) Check(tool, input string) Decision {
 		}
 		return DecisionAllow
 	case ModePlan:
+		return DecisionDeny
+	}
+
+	// A deny rule wins over a remembered "always": allowing bash for the session mustn't
+	// switch off a rule that denies one kind of bash command.
+	if d, ok := m.Rules.Match(tool, input); ok && d == DecisionDeny {
 		return DecisionDeny
 	}
 
