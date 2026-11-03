@@ -455,7 +455,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamCancel = nil
 		m.turnCancelled = false
 		m = m.refreshViewport()
-		m.viewport.GotoBottom()
 		// Update status bar with final token counts.
 		m = m.refreshViewport()
 		return m, m.speakReplyCmd()
@@ -1524,6 +1523,7 @@ func (m Model) startTurn(text string) (tea.Model, tea.Cmd) {
 	}()
 
 	m = m.refreshViewport()
+	m.viewport.GotoBottom() // the operator just sent it: show it, wherever they'd scrolled to
 	return m, tea.Batch(
 		m.spinner.Tick,
 		waitForStream(ch),
@@ -1947,8 +1947,11 @@ func (m Model) viewportHeight() int {
 	return h
 }
 
-// refreshViewport rebuilds viewport content from current buffers.
+// refreshViewport rebuilds viewport content from current buffers. It follows the output only if
+// the view was at the bottom (#8): scrolled up to read what's been written, the reader stays put
+// while more streams in, and scrolling back down follows again.
 func (m Model) refreshViewport() Model {
+	follow := m.viewport.AtBottom()
 	// Markdown placeholders become their blocks rendered at today's width (markdown.go).
 	content := m.md.expand(m.viewBuf+m.streamBuf, m.viewport.Width)
 	// viewport.Model does not word-wrap on its own (it only splits on "\n"),
@@ -1960,7 +1963,9 @@ func (m Model) refreshViewport() Model {
 		content = m.wrapped.wrap(content, m.viewport.Width)
 	}
 	m.viewport.SetContent(content)
-	m.viewport.GotoBottom()
+	if follow {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
