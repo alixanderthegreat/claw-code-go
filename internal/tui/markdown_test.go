@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -75,5 +76,73 @@ func TestRenderedRepliesRewrapOnResize(t *testing.T) {
 		if !strings.Contains(got, strings.TrimSpace(want)) {
 			t.Errorf("width %d: not laid out for this width", w)
 		}
+	}
+}
+
+// TestMarkdownNoOrphanedWords (#6): Glamour wrapped a paragraph and then wrapped it again, a little
+// narrower, so a line near the limit lost its last word to a line of its own ("or", then "are you
+// going to try it yourself?" at 87 columns). Wrapped once, no line of a paragraph is a lone word
+// with more of the paragraph after it, at any width, and none is wider than the screen.
+func TestMarkdownNoOrphanedWords(t *testing.T) {
+	md := `Simple task - change the output to "Hello, World!". Want me to make the edit, or are you going to try it yourself?`
+	for w := 40; w <= 160; w++ {
+		lines := strings.Split(ansi.Strip(renderMarkdown(md, w)), "\n")
+		for i, l := range lines {
+			if ansi.StringWidth(l) > w {
+				t.Errorf("width %d: a line of %d columns: %q", w, ansi.StringWidth(l), l)
+			}
+			s := strings.TrimSpace(l)
+			if s != "" && !strings.Contains(s, " ") && i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "" {
+				t.Errorf("width %d: %q alone on line %d, with %q after it", w, s, i, strings.TrimSpace(lines[i+1]))
+			}
+		}
+	}
+}
+
+// TestMarkdownHangingIndent: a wrapped list item continues under its words, not under its bullet
+// or number, and a wrapped quote keeps its bar on every line.
+func TestMarkdownHangingIndent(t *testing.T) {
+	long := "item that runs long enough to need wrapping at least once at this width, surely"
+	md := "- " + long + "\n\n1. numbered " + long + "\n\n> a quote " + long + "\n"
+	lines := strings.Split(ansi.Strip(renderMarkdown(md, 50)), "\n")
+	after := func(prefix string) string {
+		for i, l := range lines {
+			if strings.HasPrefix(strings.TrimLeft(l, " "), prefix) && i+1 < len(lines) {
+				return lines[i+1]
+			}
+		}
+		t.Fatalf("no line starting %q in:\n%s", prefix, strings.Join(lines, "\n"))
+		return ""
+	}
+	for _, c := range []struct{ first, want string }{
+		{"• item", "    "},       // two of margin, then under the text after "• "
+		{"1. numbered", "     "}, // under the text after "1. "
+		{"│ a quote", "  │ "},
+	} {
+		next := after(c.first)
+		if !strings.HasPrefix(next, c.want) || strings.TrimSpace(next) == "" || next[len(c.want)] == ' ' {
+			t.Errorf("after %q the next line is %q, want it to start %q then text", c.first, next, c.want)
+		}
+	}
+}
+
+// TestMarkdownKeepsStylesAcrossWrap: wrapping happens after Glamour, on styled text, so a bold
+// phrase that wraps is still bold on its second line, and nothing of the text is lost.
+func TestMarkdownKeepsStylesAcrossWrap(t *testing.T) {
+	md := "Plain words first, then **a bold phrase long enough that it has to wrap onto the next line here**, then plain."
+	out := renderMarkdown(md, 50)
+	plain := strings.Join(strings.Fields(ansi.Strip(out)), " ")
+	if !strings.Contains(plain, "a bold phrase long enough that it has to wrap onto the next line here") {
+		t.Errorf("text lost in the wrap: %q", plain)
+	}
+	var wrappedBold bool
+	for _, l := range strings.Split(out, "\n") {
+		// bold is SGR 1, wherever it sits among the parameters: "\x1b[1;38;5;252m", "\x1b[38;5;252;1m"
+		if strings.Contains(ansi.Strip(l), "next line") && regexp.MustCompile(`\x1b\[(?:[0-9;]*;)?1(?:;[0-9;]*)?m`).MatchString(l) {
+			wrappedBold = true
+		}
+	}
+	if !wrappedBold {
+		t.Errorf("the bold phrase's second line isn't bold:\n%q", out)
 	}
 }
