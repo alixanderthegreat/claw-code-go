@@ -23,21 +23,23 @@ type Theme struct {
 }
 
 // DarkTheme is the default color scheme for dark-background terminals.
+// Retuned 2026-11-07 to a quieter, slightly cooler palette: the same
+// brightness range, desaturated so nothing shouts (greatproject, Gordi colors).
 var DarkTheme = Theme{
-	Primary:        "205",
-	Secondary:      "62",
-	Success:        "82",
-	Warning:        "214",
-	Error:          "196",
+	Primary:        "110", // soft periwinkle, was hot magenta 205
+	Secondary:      "67",  // slate, was 62
+	Success:        "108", // muted sage, was spring-green 82
+	Warning:        "179", // soft amber, was 214
+	Error:          "167", // dusty red, was 196
 	Muted:          "240",
 	Subtle:         "238",
-	UserLabel:      "33",
-	AssistantLabel: "82",
-	ToolRunning:    "214",
+	UserLabel:      "109", // soft cyan, was bright blue 33
+	AssistantLabel: "108", // muted sage, was 82
+	ToolRunning:    "179", // soft amber, was 214
 	ToolDone:       "240",
-	ToolFailed:     "196",
-	InputPrompt:    "33",
-	SelectedItem:   "170",
+	ToolFailed:     "167", // dusty red, was 196
+	InputPrompt:    "109", // soft cyan, was 33
+	SelectedItem:   "110", // periwinkle, matches Primary; was pink 170
 	UnselectedItem: "252",
 }
 
