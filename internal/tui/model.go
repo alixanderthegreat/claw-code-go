@@ -869,6 +869,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		}
 		name := ApplyTheme(pref) // light|dark force; auto/"" detects the terminal
 		m.cfg.Theme = pref
+		m.repaintHistory() // recolor text already on screen, not just new output
 		msg := "Theme: " + name + "."
 		if err := config.WriteProject(&config.Settings{Theme: pref}); err != nil {
 			msg += " (not saved: " + err.Error() + ")"
@@ -1100,6 +1101,23 @@ func (m Model) configGet(key string) string {
 	}
 }
 
+// repaintHistory rebuilds the scrollback from the session's saved messages
+// using the current theme's styles, so a theme switch recolors text already on
+// screen rather than only new output. Lines already in the buffer bake their
+// colors in as escape codes, so rendering the conversation again is the only
+// way to restyle them. Transient lines that aren't saved messages - command
+// output, notices - fall away on the repaint; the saved conversation is what
+// matters. A fresh mdStore is used so the markdown re-renders under the new
+// theme instead of returning its cached (old-theme) output.
+func (m *Model) repaintHistory() {
+	m.md = newMDStore()
+	buf := RenderLogo(appVersion)
+	if m.loop.Session != nil && len(m.loop.Session.Messages) > 0 {
+		buf += "\n" + renderHistory(m.loop.Session.Messages, m.md)
+	}
+	m.viewBuf = buf
+}
+
 // configSet updates a config key in-memory and persists to project settings.json.
 func (m *Model) configSet(key, value string) error {
 	s := &config.Settings{}
@@ -1122,6 +1140,7 @@ func (m *Model) configSet(key, value string) error {
 		m.cfg.Theme = value
 		s.Theme = value
 		ApplyTheme(value) // "auto"/"" detects the terminal background
+		m.repaintHistory() // recolor the scrollback, not just new output
 	default:
 		return fmt.Errorf("unknown config key %q (valid: model, permissionMode, contextWindow, theme)", key)
 	}
