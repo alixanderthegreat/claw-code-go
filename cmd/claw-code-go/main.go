@@ -231,6 +231,11 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 		os.Exit(0)
 	}()
 
+	// Match the terminal: with no explicit theme set, detect its background
+	// instead of always starting dark. Done before the program takes the
+	// screen, since detection queries the terminal.
+	tui.ApplyTheme(cfg.Theme)
+
 	model := tui.NewModel(cfg, loop)
 	// WithMouseCellMotion requests real mouse reporting from the terminal - without it, the
 	// terminal has no reason to report wheel events at all, and most substitute synthesized

@@ -120,6 +120,7 @@ func LoadConfig() *Config {
 		}
 		cfg.VoiceMode = gc.VoiceMode
 		cfg.STTModel = gc.STTModel
+		cfg.Theme = gc.Theme
 	}
 
 	// Environment variables override global config.

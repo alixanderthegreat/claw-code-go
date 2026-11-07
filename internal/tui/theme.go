@@ -68,3 +68,30 @@ func SetTheme(t Theme) {
 	currentTheme = t
 	rebuildStyles(t)
 }
+
+// ApplyTheme sets the theme from a preference: "light" or "dark" force a
+// scheme; anything else ("auto" or empty) detects the terminal's background
+// and matches it, so Gordi no longer starts dark on a light terminal. A name
+// is returned for display.
+//
+// Detection (lipgloss.HasDarkBackground) queries the terminal, so call this
+// before the bubbletea program takes over the screen. When it can't tell (a
+// pipe, an unresponsive terminal) lipgloss reports a dark background, which
+// keeps the long-standing default.
+func ApplyTheme(pref string) string {
+	switch pref {
+	case "light":
+		SetTheme(LightTheme)
+		return "light"
+	case "dark":
+		SetTheme(DarkTheme)
+		return "dark"
+	default:
+		if lipgloss.HasDarkBackground() {
+			SetTheme(DarkTheme)
+			return "dark (detected)"
+		}
+		SetTheme(LightTheme)
+		return "light (detected)"
+	}
+}

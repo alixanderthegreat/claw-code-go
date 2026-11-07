@@ -863,18 +863,17 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "/theme":
-		theme := "dark"
+		pref := "auto"
 		if len(parts) > 1 {
-			theme = parts[1]
+			pref = parts[1]
 		}
-		switch theme {
-		case "light":
-			SetTheme(LightTheme)
-			m.viewBuf += renderBlock(statusStyle, "Theme: light.")
-		default:
-			SetTheme(DarkTheme)
-			m.viewBuf += renderBlock(statusStyle, "Theme: dark.")
+		name := ApplyTheme(pref) // light|dark force; auto/"" detects the terminal
+		m.cfg.Theme = pref
+		msg := "Theme: " + name + "."
+		if err := config.WriteProject(&config.Settings{Theme: pref}); err != nil {
+			msg += " (not saved: " + err.Error() + ")"
 		}
+		m.viewBuf += renderBlock(statusStyle, msg)
 		m = m.refreshViewport()
 		return m, nil
 
@@ -1122,12 +1121,7 @@ func (m *Model) configSet(key, value string) error {
 	case "theme":
 		m.cfg.Theme = value
 		s.Theme = value
-		switch value {
-		case "light":
-			SetTheme(LightTheme)
-		default:
-			SetTheme(DarkTheme)
-		}
+		ApplyTheme(value) // "auto"/"" detects the terminal background
 	default:
 		return fmt.Errorf("unknown config key %q (valid: model, permissionMode, contextWindow, theme)", key)
 	}
@@ -1774,7 +1768,7 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("/config")+" <key>                   Show one config value",
 		"  "+userLabelStyle.Render("/config")+" <key> <value>           Set config value (saves to project)",
 		"  "+userLabelStyle.Render("/init")+"                           Create .claude/settings.json",
-		"  "+userLabelStyle.Render("/theme")+" dark|light               Switch TUI color theme",
+		"  "+userLabelStyle.Render("/theme")+" dark|light|auto          Switch TUI color theme (auto matches the terminal)",
 		"  "+userLabelStyle.Render("/status")+"                         Show model/provider/session info",
 		"  "+userLabelStyle.Render("/card")+"                           Show what the model is sent: each part's size, the system prompt, the summary",
 		"  "+userLabelStyle.Render("/cost")+"                           Show token usage this session",
