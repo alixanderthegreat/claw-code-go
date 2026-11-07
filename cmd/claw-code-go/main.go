@@ -4,6 +4,7 @@ import (
 	"claw-code-go/internal/auth"
 	"claw-code-go/internal/commands"
 	"claw-code-go/internal/compat"
+	"claw-code-go/internal/config"
 	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
 	"claw-code-go/internal/serve"
@@ -74,6 +75,16 @@ func main() {
 
 	flag.Parse()
 
+	// A config file that exists but doesn't parse is named and fatal, rather
+	// than silently falling back to empty settings (which looked exactly like
+	// having no config at all). A missing file is fine - first run writes one.
+	if err := config.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	// On first run, leave a 0600 starter template the user fills in.
+	wroteTemplate, cfgPath, _ := config.EnsureGlobal()
+
 	cfg := runtime.LoadConfig()
 
 	if *modelFlag != "" {
@@ -105,11 +116,30 @@ func main() {
 		// gateway/kronk endpoint could never be used without ALSO exporting OPENAI_API_KEY by
 		// hand on every single invocation.
 		cfg.AuthMethod = "api_key"
+	} else if wroteTemplate {
+		// First run: we just wrote a template with no key, so nothing can reach
+		// a model yet. Exit after pointing at the file rather than open a TUI
+		// that can't talk to anything - the setup message is then unmissable,
+		// and on the next run the user can edit the file or use /login.
+		fmt.Fprintf(os.Stderr, "Wrote a starter config to %s\n", cfgPath)
+		fmt.Fprintln(os.Stderr, "Fill in base_url, model and api_key (set context_window for a local gateway), then run again.")
+		fmt.Fprintln(os.Stderr, "To use Anthropic or OpenAI instead, run again and sign in with /login.")
+		os.Exit(0)
+	} else if cfg.BaseURL != "" {
+		// A gateway is configured but its key is missing - /login is the wrong
+		// advice here; the key belongs in the config file.
+		fmt.Fprintf(os.Stderr, "Note: no credentials found (%v).\n", credErr)
+		fmt.Fprintf(os.Stderr, "      base_url is set in %s; add its api_key there.\n", cfgPath)
 	} else {
-		// No credentials found — start with NoAuthClient so the TUI still opens.
-		// The user can run /login inside the TUI.
+		// No credentials and no endpoint - start with NoAuthClient so the TUI
+		// still opens, and the user can run /login inside it.
 		fmt.Fprintf(os.Stderr, "Note: no credentials found (%v).\n", credErr)
 		fmt.Fprintln(os.Stderr, "      Use /login in the TUI to authenticate.")
+	}
+
+	// If the config holds a key other users can read, say so, the way ssh does.
+	if exposed, mode, err := config.WorldReadable(); err == nil && exposed {
+		fmt.Fprintf(os.Stderr, "Warning: %s is mode %04o and holds an api_key; tighten it with: chmod 600 %s\n", cfgPath, mode, cfgPath)
 	}
 
 	// Create the provider client (or a no-auth placeholder).
