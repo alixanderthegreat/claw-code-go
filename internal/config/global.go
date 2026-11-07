@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -9,6 +11,11 @@ import (
 const (
 	// DefaultModel is the model used when initializing global config without one.
 	DefaultModel = "claude-sonnet-4-20250514"
+
+	// templateContextWindow is the context size written into a fresh template.
+	// Small on purpose: a local gateway's window is far below a frontier
+	// model's, and an over-large value defeats compaction (see ContextWindow).
+	templateContextWindow = 32768
 )
 
 // GlobalConfig holds user-level defaults from ~/.config/claw-code-go/config.json.
@@ -69,8 +76,13 @@ func LoadGlobal() (*GlobalConfig, error) {
 }
 
 // InitGlobal creates ~/.config/claw-code-go/config.json if it doesn't already
-// exist, writing a minimal default config. Returns os.ErrExist if the file
-// already exists.
+// exist, writing a starter template the user fills in. Returns os.ErrExist if
+// the file already exists.
+//
+// The file holds an api_key, so it is written 0600 in a 0700 directory. The
+// template leaves base_url, model and api_key empty (not a frontier-model
+// default): this fork talks to a local gateway, and an empty model is a clear
+// "fill me in" rather than a wrong guess that fails confusingly at runtime.
 func InitGlobal(model string) error {
 	path, err := GlobalConfigPath()
 	if err != nil {
@@ -79,18 +91,77 @@ func InitGlobal(model string) error {
 	if _, err := os.Stat(path); err == nil {
 		return os.ErrExist
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if model == "" {
-		model = DefaultModel
-	}
 	cfg := &GlobalConfig{
-		Model: model,
+		Model:         model, // empty unless a caller insists
+		ContextWindow: templateContextWindow,
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
+}
+
+// EnsureGlobal writes a starter template (via InitGlobal) when no global config
+// exists yet. It reports whether it created one and the path, so a caller can
+// tell the user what to fill in. An already-present file is left untouched.
+func EnsureGlobal() (created bool, path string, err error) {
+	path, err = GlobalConfigPath()
+	if err != nil {
+		return false, "", err
+	}
+	switch err := InitGlobal(""); {
+	case err == nil:
+		return true, path, nil
+	case errors.Is(err, os.ErrExist):
+		return false, path, nil
+	default:
+		return false, path, err
+	}
+}
+
+// Validate reports a global config that exists but cannot be read or parsed,
+// naming the file. A missing file is not an error (first run writes one). This
+// is what turns a silent fallback-to-empty - where a typo looked exactly like
+// "no config" - into a message that points at the actual file.
+func Validate() error {
+	path, err := GlobalConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+	var cfg GlobalConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("config %s is not valid JSON: %w", path, err)
+	}
+	return nil
+}
+
+// WorldReadable reports whether the config file is readable by group or other
+// (any of 0o077) while holding an api_key - the condition a caller may warn or
+// act on, the way ssh does for a private key.
+func WorldReadable() (bool, os.FileMode, error) {
+	path, err := GlobalConfigPath()
+	if err != nil {
+		return false, 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, 0, err
+	}
+	mode := info.Mode().Perm()
+	cfg, err := LoadGlobal()
+	if err != nil || cfg.APIKey == "" {
+		return false, mode, nil
+	}
+	return mode&0o077 != 0, mode, nil
 }
