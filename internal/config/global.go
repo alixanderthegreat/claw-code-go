@@ -27,6 +27,10 @@ type GlobalConfig struct {
 	// models with a small window (e.g. 35000) where the built-in default is
 	// far too large to protect against overflowing the model's real limit.
 	ContextWindow int `json:"context_window"`
+	// Theme picks the TUI color scheme: "dark", "light", or "auto" (detect the
+	// terminal's background). Empty means auto - so Gordi matches the terminal
+	// instead of always starting dark.
+	Theme string `json:"theme"`
 	// VoiceMode is when the TUI speaks replies: "auto" (when you spoke the
 	// message), "on" (always) or "off". Empty means auto.
 	VoiceMode string `json:"voice_mode"`
