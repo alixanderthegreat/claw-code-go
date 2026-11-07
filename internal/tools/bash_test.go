@@ -21,6 +21,40 @@ func TestBashCannotPrompt(t *testing.T) {
 	}
 }
 
+// TestCommandTimeout: the "timeout" input picks the bound, clamped, with the default as fallback.
+func TestCommandTimeout(t *testing.T) {
+	saved := bashTimeout
+	bashTimeout = 30 * time.Second
+	defer func() { bashTimeout = saved }()
+	for _, c := range []struct {
+		name string
+		in   map[string]any
+		want time.Duration
+	}{
+		{"absent uses default", map[string]any{}, 30 * time.Second},
+		{"positive is honored", map[string]any{"timeout": float64(5)}, 5 * time.Second},
+		{"over max is clamped", map[string]any{"timeout": float64(99999)}, maxBashTimeout},
+		{"zero falls back", map[string]any{"timeout": float64(0)}, 30 * time.Second},
+		{"wrong type falls back", map[string]any{"timeout": "nope"}, 30 * time.Second},
+	} {
+		if got := commandTimeout(c.in); got != c.want {
+			t.Errorf("%s: commandTimeout(%v) = %s, want %s", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// TestBashPerCallTimeoutOutlivesDefault: a command with its own larger timeout isn't killed by a
+// short default - the fix for `consult` and other waits dying at 30 s.
+func TestBashPerCallTimeoutOutlivesDefault(t *testing.T) {
+	saved := bashTimeout
+	bashTimeout = time.Second
+	defer func() { bashTimeout = saved }()
+	out, err := ExecuteBash(map[string]any{"command": "sleep 2; echo done", "timeout": float64(10)})
+	if err != nil || !strings.Contains(out, "done") {
+		t.Errorf("out=%q err=%v, want the command to outlive the 1s default", out, err)
+	}
+}
+
 // TestBashTimeoutKillsChildren: at the time limit the whole command goes, children included - a
 // child holding the output open used to keep the tool waiting long past the limit.
 func TestBashTimeoutKillsChildren(t *testing.T) {
