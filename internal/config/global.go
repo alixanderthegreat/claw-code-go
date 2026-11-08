@@ -38,8 +38,11 @@ type GlobalConfig struct {
 	// terminal's background). Empty means auto - so Gordi matches the terminal
 	// instead of always starting dark.
 	Theme string `json:"theme"`
-	// VoiceMode is when the TUI speaks replies: "auto" (when you spoke the
-	// message), "on" (always) or "off". Empty means auto.
+	// VoiceMode turns voice on for this machine and says when the TUI speaks
+	// replies: "auto" (when you spoke the message), "on" (always) or "off"
+	// (you can still speak, nothing is said back). Empty means this machine
+	// isn't set up for voice: no recording, nothing said - a gate, so a
+	// machine without a mic or the speech endpoints doesn't offer it.
 	VoiceMode string `json:"voice_mode"`
 	// STTModel is the transcription model asked for; empty means small.en.
 	STTModel string `json:"stt_model"`

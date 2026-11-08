@@ -21,6 +21,7 @@ import (
 type voiceState struct {
 	client  *voice.Client
 	speaker *voice.Speaker
+	enabled bool   // this machine is set up for voice (voice_mode is set, and it can work here)
 	mode    string // auto | on | off
 
 	rec          *voice.Recording // non-nil while recording
@@ -44,12 +45,20 @@ func newVoiceState(cfg *runtime.Config) *voiceState {
 	if mode != "on" && mode != "off" {
 		mode = "auto"
 	}
-	return &voiceState{client: client, speaker: voice.NewSpeaker(client), mode: mode}
+	return &voiceState{client: client, speaker: voice.NewSpeaker(client), enabled: cfg.VoiceMode != "", mode: mode}
 }
+
+// voiceNotSetUp is what Ctrl+R and /voice say on a machine that isn't set up for voice.
+const voiceNotSetUp = "Voice isn't set up on this machine: set voice_mode (auto, on or off) in ~/.config/claw-code-go/config.json. `claw-code-go doctor` checks what it needs."
 
 // toggleRecording is Ctrl+R: start recording, or stop and transcribe.
 func (m Model) toggleRecording() (tea.Model, tea.Cmd) {
 	v := m.voice
+	if !v.enabled {
+		m.viewBuf += renderBlock(statusStyle, voiceNotSetUp)
+		m = m.refreshViewport()
+		return m, nil
+	}
 	if v.transcribing {
 		return m, nil
 	}
@@ -122,7 +131,7 @@ func (m Model) voiceTurnStarted() {
 // speakReplyCmd says the finished reply, if this turn calls for it.
 func (m Model) speakReplyCmd() tea.Cmd {
 	v := m.voice
-	speak := v.mode == "on" || (v.mode == "auto" && v.turnSpoken)
+	speak := v.enabled && (v.mode == "on" || (v.mode == "auto" && v.turnSpoken))
 	text := voice.Prose(v.reply)
 	v.turnSpoken, v.reply = false, ""
 	if !speak || text == "" {
@@ -135,6 +144,11 @@ func (m Model) speakReplyCmd() tea.Cmd {
 // handleVoiceCommand is /voice [auto|on|off].
 func (m Model) handleVoiceCommand(parts []string) (tea.Model, tea.Cmd) {
 	v := m.voice
+	if !v.enabled {
+		m.viewBuf += renderBlock(statusStyle, voiceNotSetUp)
+		m = m.refreshViewport()
+		return m, nil
+	}
 	if len(parts) > 1 {
 		switch parts[1] {
 		case "auto", "on", "off":

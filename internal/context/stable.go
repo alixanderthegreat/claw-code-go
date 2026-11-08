@@ -19,8 +19,18 @@ const (
 	maxMemoryIndexBytes = 8 * 1024
 )
 
-// instructionNames are the files read from each directory, in this order.
-var instructionNames = []string{"CLAUDE.md", "AGENTS.md", filepath.Join(".claude", "CLAUDE.md")}
+// instructionNames are the files read from each directory, in this order: Claude Code's and the
+// agents' conventions, which a project shares with every harness, then GORDI.md, Gordi's own, last
+// so it has the final word.
+var instructionNames = []string{"CLAUDE.md", "AGENTS.md", filepath.Join(".claude", "CLAUDE.md"), "GORDI.md"}
+
+// MachineFile is this machine's GORDI.md, next to Gordi's config: what this machine has - its
+// tools among them (tools.go). It's per machine and in no checkout, so a project copied to another
+// machine can't bring this one's tools with it.
+func MachineFile() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "claw-code-go", "GORDI.md")
+}
 
 // dirsDown is the directories from home (or the filesystem root, outside home) down to workDir,
 // outermost first - so a project's own instructions come after, and refine, those above it.
@@ -43,15 +53,15 @@ func dirsDown(workDir string) []string {
 	return up
 }
 
-// instructionPaths is every instruction file that applies to workDir: the user's global one, then
-// each directory's from home down.
+// instructionPaths is every instruction file that applies to workDir: the user's global one, this
+// machine's GORDI.md, then each directory's from home down.
 func instructionPaths(workDir string) []string {
 	home, _ := os.UserHomeDir()
-	paths := []string{filepath.Join(home, ".claude", "CLAUDE.md")}
+	paths := []string{filepath.Join(home, ".claude", "CLAUDE.md"), MachineFile()}
 	for _, d := range dirsDown(workDir) {
 		for _, n := range instructionNames {
 			p := filepath.Join(d, n)
-			if p != paths[0] {
+			if p != paths[0] && p != paths[1] {
 				paths = append(paths, p)
 			}
 		}
@@ -190,6 +200,9 @@ func StableSections(workDir string) Sections {
 	var sec Sections
 	if ins := Instructions(workDir); ins != "" {
 		sec.Instructions = "# Instructions\n\nFollow these; the ones further down are closer to this project and win.\n\n" + ins
+		if note := missingToolsNote(); note != "" {
+			sec.Instructions += "\n\n" + note
+		}
 	}
 	for _, p := range instructionPaths(workDir) {
 		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {

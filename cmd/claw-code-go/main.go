@@ -10,6 +10,7 @@ import (
 	"claw-code-go/internal/serve"
 	"claw-code-go/internal/telemetry"
 	"claw-code-go/internal/tui"
+	"claw-code-go/internal/voice"
 	"context"
 	"flag"
 	"fmt"
@@ -42,6 +43,9 @@ func main() {
 		case "serve":
 			runServe(os.Args[2:])
 			return
+		case "doctor":
+			runDoctor(os.Args[2:])
+			return
 		}
 	}
 
@@ -60,7 +64,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  bootstrap-plan [--json]                 Print the ordered startup phase plan\n")
 		fmt.Fprintf(os.Stderr, "  print-system-prompt [--cwd] [--date]    Render the full system prompt\n")
 		fmt.Fprintf(os.Stderr, "  resume-session <file> [commands...]     Replay a saved session file\n")
-		fmt.Fprintf(os.Stderr, "  serve [--addr] [--session-root]         Minimal dispatch server (kata 84) - loopback only, no auth\n\n")
+		fmt.Fprintf(os.Stderr, "  serve [--addr] [--session-root]         Minimal dispatch server (kata 84) - loopback only, no auth\n")
+		fmt.Fprintf(os.Stderr, "  doctor                                  What this machine is set up for, and whether each part works\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment variables:\n")
@@ -92,6 +97,14 @@ func main() {
 	}
 	if *sessionDirFlag != "" {
 		cfg.SessionDir = *sessionDirFlag
+	}
+	// Voice is a gate (#21): set up in the config, and able to work here. Set up but unable -
+	// no recorder or player - is said once, and voice is off for this session.
+	if cfg.VoiceMode != "" {
+		if _, _, err := voice.Check(); err != nil {
+			fmt.Fprintf(os.Stderr, "Note: voice_mode is set, but %v; voice is off this session (claw-code-go doctor checks it).\n", err)
+			cfg.VoiceMode = ""
+		}
 	}
 
 	// Resolve credentials using the multi-provider credential store.

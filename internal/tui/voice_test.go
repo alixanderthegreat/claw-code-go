@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -27,8 +28,9 @@ func TestTranscriptJoinsTheDraft(t *testing.T) {
 	}
 }
 
-// TestWhenRepliesAreSpoken: auto speaks a reply to a spoken message only; on always; off never.
-// What's said is the text after the last tool call.
+// TestWhenRepliesAreSpoken: auto speaks a reply to a spoken message only; on always; off never;
+// and a machine not set up for voice (no voice_mode) never. What's said is the text after the
+// last tool call.
 func TestWhenRepliesAreSpoken(t *testing.T) {
 	for _, c := range []struct {
 		mode   string
@@ -36,6 +38,7 @@ func TestWhenRepliesAreSpoken(t *testing.T) {
 		want   bool
 	}{
 		{"auto", true, true}, {"auto", false, false}, {"on", false, true}, {"off", true, false},
+		{"", true, false},
 	} {
 		m := voiceModel(c.mode)
 		m.voice.draftSpoken = c.spoken
@@ -54,5 +57,21 @@ func TestWhenRepliesAreSpoken(t *testing.T) {
 	m.voice.reply = "```\ncode only\n```"
 	if m.speakReplyCmd() != nil {
 		t.Errorf("a reply with nothing to say aloud shouldn't start the speaker")
+	}
+}
+
+// TestVoiceNotSetUp: on a machine without voice_mode, Ctrl+R doesn't record and /voice doesn't
+// switch it on; both say how to set it up.
+func TestVoiceNotSetUp(t *testing.T) {
+	m := voiceModel("")
+	mm, _ := m.toggleRecording()
+	got := mm.(Model)
+	if got.voice.rec != nil || !strings.Contains(got.viewBuf, "isn't set up") {
+		t.Errorf("Ctrl+R: recording %v, said %q", got.voice.rec != nil, got.viewBuf)
+	}
+	mm, _ = voiceModel("").handleVoiceCommand([]string{"/voice", "on"})
+	got = mm.(Model)
+	if got.voice.mode == "on" || !strings.Contains(got.viewBuf, "isn't set up") {
+		t.Errorf("/voice on: mode %q, said %q", got.voice.mode, got.viewBuf)
 	}
 }
