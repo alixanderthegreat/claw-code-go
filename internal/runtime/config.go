@@ -80,6 +80,8 @@ type Config struct {
 	// (internal/voice). STTModel is the transcription model it asks for.
 	VoiceMode string
 	STTModel  string
+	// SpeechVoice is the voice replies are spoken in; empty is the speech service's default.
+	SpeechVoice string
 }
 
 // LoadConfig reads configuration from layered settings files, the global
@@ -120,6 +122,7 @@ func LoadConfig() *Config {
 		}
 		cfg.VoiceMode = gc.VoiceMode
 		cfg.STTModel = gc.STTModel
+		cfg.SpeechVoice = gc.SpeechVoice
 		cfg.Theme = gc.Theme
 	}
 

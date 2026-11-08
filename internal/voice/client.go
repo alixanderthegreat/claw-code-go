@@ -29,7 +29,10 @@ type Client struct {
 	BaseURL  string // as for chat, e.g. http://core:8080/kronk-only/v1
 	APIKey   string
 	STTModel string
-	HTTP     *http.Client
+	// Voice is the speech service's voice to speak in (F1-F5, M1-M5); empty is the service's
+	// default, which is Mary's (F5) - so Gordi sets its own.
+	Voice string
+	HTTP  *http.Client
 }
 
 // NewClient returns a Client for baseURL. sttModel may be empty for DefaultSTTModel.
@@ -124,15 +127,19 @@ func dropMarkers(text string) string {
 
 // Synthesize returns text spoken as a WAV.
 func (c *Client) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	payload, _ := json.Marshal(map[string]string{"model": "supertonic", "input": text, "response_format": "wav"})
+	body := map[string]string{"model": "supertonic", "input": text, "response_format": "wav"}
+	if c.Voice != "" {
+		body["voice"] = c.Voice
+	}
+	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/audio/speech"), bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	body, err := c.do(req)
+	wav, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("speak: %w", err)
 	}
-	return body, nil
+	return wav, nil
 }

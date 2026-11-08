@@ -111,3 +111,32 @@ func TestDropMarkers(t *testing.T) {
 		}
 	}
 }
+
+// TestSynthesizeSendsTheVoice: the configured voice goes with every speech request, so Gordi
+// doesn't speak in the service's default (Mary's); with none configured, no voice is sent.
+func TestSynthesizeSendsTheVoice(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte("RIFF"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL+"/v1", "", "")
+	c.Voice = "M3"
+	if _, err := c.Synthesize(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if got["voice"] != "M3" || got["input"] != "hello" {
+		t.Errorf("request = %v, want voice M3", got)
+	}
+
+	c.Voice = ""
+	if _, err := c.Synthesize(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := got["voice"]; ok {
+		t.Errorf("no voice configured, but the request named %q", v)
+	}
+}
