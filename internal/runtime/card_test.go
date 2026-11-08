@@ -38,6 +38,7 @@ func TestCardSeesAnInstructionChange(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
+	t.Setenv("HOME", dir) // not the machine's own ~/.claude/CLAUDE.md or GORDI.md
 	t.Setenv("CLAW_MEMORY_DIR", filepath.Join(dir, "memory"))
 	os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Project\n\nUse Go."), 0o644)
 	loop := newScriptedLoop(&scriptedClient{}, nil)
