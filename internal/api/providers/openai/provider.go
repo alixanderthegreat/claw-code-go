@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -57,6 +58,10 @@ type Client struct {
 	Model      string
 	MaxTokens  int
 	HTTPClient *http.Client
+
+	// blind is set once the server has dropped the images it was sent (images.go): from then
+	// on each image goes as a note instead, so the conversation can carry on.
+	blind atomic.Bool
 }
 
 // ----- Request types ---------------------------------------------------------
@@ -139,6 +144,9 @@ type oaiFunctionCall struct {
 type oaiChunk struct {
 	Choices []oaiChoice `json:"choices"`
 	Usage   *oaiUsage   `json:"usage"`
+	// Object and SystemFingerprint say, from kronk, whether it used the request's images (images.go).
+	Object            string `json:"object"`
+	SystemFingerprint string `json:"system_fingerprint"`
 }
 
 type oaiChoice struct {
@@ -229,7 +237,7 @@ func (c *Client) StreamResponse(ctx context.Context, req api.CreateMessageReques
 	}
 
 	ch := make(chan api.StreamEvent, 64)
-	go c.streamEvents(ctx, resp, ch)
+	go c.streamEvents(ctx, resp, ch, countImageParts(oaiReq.Messages))
 	return ch, nil
 }
 
@@ -242,9 +250,13 @@ func (c *Client) buildRequest(req api.CreateMessageRequest) (*oaiRequest, error)
 		model = req.Model
 	}
 
+	messages := convertMessages(req.System, req.Messages)
+	if c.blind.Load() {
+		messages = withoutImages(messages)
+	}
 	return &oaiRequest{
 		Model:         model,
-		Messages:      convertMessages(req.System, req.Messages),
+		Messages:      messages,
 		Tools:         convertTools(req.Tools),
 		Stream:        true,
 		MaxTokens:     req.MaxTokens,
@@ -395,7 +407,7 @@ const thinkingBlockIndex = -1
 
 // streamEvents reads OpenAI SSE chunks from resp and emits api.StreamEvent
 // values compatible with the conversation loop's runOneTurnStreaming.
-func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<- api.StreamEvent) {
+func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<- api.StreamEvent, sentImages int) {
 	defer close(ch)
 	defer resp.Body.Close()
 
@@ -422,6 +434,7 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		inputTokens     int
 		cachedTokens    int
 		extra           api.UsageDelta // kronk's additions to usage, for telemetry
+		checked         bool           // whether the first chunk was checked for dropped images
 	)
 
 	for scanner.Scan() {
@@ -440,6 +453,16 @@ func (c *Client) streamEvents(ctx context.Context, resp *http.Response, ch chan<
 		var chunk oaiChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
+		}
+
+		// Before the model's answer reaches anyone: did the server use the images it was sent?
+		if !checked {
+			checked = true
+			if imagesDropped(chunk, sentImages) {
+				c.blind.Store(true)
+				send(api.StreamEvent{Type: api.EventError, ErrorMessage: droppedImagesError(sentImages)})
+				return
+			}
 		}
 
 		// Capture usage from the final usage chunk (choices will be empty there).
