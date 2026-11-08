@@ -10,7 +10,7 @@ import (
 
 // gordiMD is a machine GORDI.md in the shape simpleproject's CLAUDE.md lists its tools.
 const gordiMD = "# This machine\n\n" +
-	"device: a laptop, on the home network.\n\n" +
+	"A machine's own notes.\n\n" +
 	"- `notatool` - a bullet before the Tools section isn't a tool\n\n" +
 	"## Tools on PATH\n\n" +
 	"- `library books | search \"q\" [-in books|notes|all]` - the book library. `library notes [waiting]` and\n" +
@@ -19,7 +19,7 @@ const gordiMD = "# This machine\n\n" +
 	"- A transcript to consult on: `transcribe text ID -plain > FILE`, read it, then consult.\n" +
 	"- `speak \"TEXT\"` (or `echo TEXT | speak`) - says it aloud.\n" +
 	"  - `nested` - an indented bullet is part of the one above, not a tool\n" +
-	"- `gopass` - the stack's secrets.\n" +
+	"- `gopass` - a password store.\n" +
 	"* `screenshot [-w | -r]` - a screenshot of the whole screen.\n\n" +
 	"## Working here\n\n" +
 	"- `go vet ./...` before calling something done - not a tool: another section\n"
@@ -63,7 +63,7 @@ func TestToolsGate(t *testing.T) {
 		t.Fatalf("Tools = %+v, want 5 with speak not on PATH", tools)
 	}
 	s := Stable(home)
-	if !strings.Contains(s, "device: a laptop") {
+	if !strings.Contains(s, "A machine's own notes") {
 		t.Errorf("the machine's GORDI.md isn't in the instructions:\n%s", s)
 	}
 	if !strings.Contains(s, "Not on this machine: `speak`, `screenshot`.") {
