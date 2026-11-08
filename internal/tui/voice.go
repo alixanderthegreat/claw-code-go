@@ -41,6 +41,7 @@ type (
 
 func newVoiceState(cfg *runtime.Config) *voiceState {
 	client := voice.NewClient(cfg.BaseURL, cfg.APIKey, cfg.STTModel)
+	client.Voice = cfg.SpeechVoice
 	mode := cfg.VoiceMode
 	if mode != "on" && mode != "off" {
 		mode = "auto"

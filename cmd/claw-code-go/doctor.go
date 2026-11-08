@@ -68,7 +68,11 @@ func doctor() []check {
 	} else if rec, player, err := voice.Check(); err != nil {
 		out = append(out, check{"voice", "FAIL", fmt.Sprintf("voice_mode is %q, but %v", cfg.VoiceMode, err)})
 	} else {
-		out = append(out, check{"voice", "ok", fmt.Sprintf("%s: records with %s, plays with %s", cfg.VoiceMode, rec, player)})
+		speaks := cfg.SpeechVoice
+		if speaks == "" {
+			speaks = "the service's default (Mary's): set speech_voice"
+		}
+		out = append(out, check{"voice", "ok", fmt.Sprintf("%s: records with %s, plays with %s, speaks as %s", cfg.VoiceMode, rec, player, speaks)})
 	}
 
 	wd, _ := os.Getwd()
