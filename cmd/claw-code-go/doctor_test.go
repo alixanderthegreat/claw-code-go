@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	ctxpkg "claw-code-go/internal/context"
 )
@@ -38,6 +39,18 @@ func TestModelCheck(t *testing.T) {
 				t.Errorf("modelCheck = %s %q, want %s with %q", c.status, c.detail, tc.status, tc.detail)
 			}
 		})
+	}
+
+	// A server busy past the timeout - one queueing requests behind a generation - is a warning,
+	// not a failure.
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
+	defer slow.Close()
+	defer close(release)
+	busy := slow.Client()
+	busy.Timeout = 50 * time.Millisecond
+	if c := modelCheck(slow.URL+"/v1", "", "a/listed", busy); c.status != "warn" || !strings.Contains(c.detail, "busy") {
+		t.Errorf("a server busy past the timeout: %s %q, want warn", c.status, c.detail)
 	}
 
 	modelCheck(srv.URL+"/kronk-only/v1", "k", "a/listed", srv.Client())

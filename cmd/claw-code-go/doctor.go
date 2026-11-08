@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,6 +111,11 @@ func modelCheck(baseURL, apiKey, model string, client *http.Client) check {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		// No answer in time isn't the same as no server: one that takes a request at a time
+		// holds even its model list behind a long generation. Down is FAIL; slow is a warning.
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			return check{"model", "warn", fmt.Sprintf("%s didn't list its models in %s: busy, or not answering; run doctor again", baseURL, client.Timeout)}
+		}
 		return check{"model", "FAIL", fmt.Sprintf("can't reach %s: %v", baseURL, err)}
 	}
 	defer resp.Body.Close()
