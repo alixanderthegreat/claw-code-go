@@ -31,18 +31,18 @@ func fencedAction(tool string, rule *permissions.Rule) string {
 // what is fenced (fencedAction), and what to do now: not retry it, and not reach the same result
 // another way - another command, a script, a different tool.
 func refusalText(by refusedBy, tool string, rule *permissions.Rule) string {
-	what := fencedAction(tool, rule)
+	format := "Permission denied: %s."
 	switch by {
 	case refusedByRule:
-		return fmt.Sprintf("Refused by a permission rule: %s stay with the operator. "+
-			"Don't retry it or get the same result another way (another command, a script, a different tool). "+
-			"Tell the operator what you wanted to do and why, then carry on with the rest.", what)
+		format = "Refused by a permission rule: %s stay with the operator. " +
+			"Don't retry it or get the same result another way (another command, a script, a different tool). " +
+			"Tell the operator what you wanted to do and why, then carry on with the rest."
 	case refusedUnattended:
-		return fmt.Sprintf("Not run: %s needed the operator's permission, and no one was there to ask. "+
-			"Don't try it another way. Say in your answer what you needed allowed and why, "+
-			"so the operator can add a rule or run it.", what)
+		format = "Not run: %s needed the operator's permission, and no one was there to ask. " +
+			"Don't try it another way. Say in your answer what you needed allowed and why, " +
+			"so the operator can add a rule or run it."
 	case refusedByOperator:
-		return fmt.Sprintf("The operator declined this call (%s). Don't retry it or work around it.", what)
+		format = "The operator declined this call (%s). Don't retry it or work around it."
 	}
-	return fmt.Sprintf("Permission denied for tool: %s (%s)", tool, what)
+	return fmt.Sprintf(format, fencedAction(tool, rule))
 }
