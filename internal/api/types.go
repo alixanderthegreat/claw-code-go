@@ -88,6 +88,10 @@ type CreateMessageRequest struct {
 	Messages  []Message `json:"messages"`
 	Tools     []Tool    `json:"tools,omitempty"`
 	Stream    bool      `json:"stream"`
+	// NoThinking asks a reasoning model to answer without thinking first, where the provider
+	// can say so (an OpenAI-compatible server's chat_template_kwargs). For short side calls,
+	// where thinking would spend the whole budget (#32).
+	NoThinking bool `json:"-"`
 }
 
 // --- SSE Event Types ---
@@ -108,8 +112,8 @@ const (
 
 // Delta represents the delta portion of a content_block_delta event.
 type Delta struct {
-	Type       string `json:"type"`        // "text_delta" or "input_json_delta"
-	Text       string `json:"text"`        // for text_delta
+	Type        string `json:"type"`         // "text_delta" or "input_json_delta"
+	Text        string `json:"text"`         // for text_delta
 	PartialJSON string `json:"partial_json"` // for input_json_delta
 }
 

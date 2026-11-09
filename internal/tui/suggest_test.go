@@ -158,3 +158,18 @@ func TestLooksOutward(t *testing.T) {
 		t.Errorf("the log doesn't mark an outward suggestion: %s", b)
 	}
 }
+
+// The side call asks for no thinking: given room to think, the 27B spent it all and wrote nothing.
+func TestSuggestNextAsksNoThinking(t *testing.T) {
+	m, client := suggestModel(t)
+	m.loop.Session.Messages = []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "build it"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "Built."}}},
+	}
+	if _, err := m.loop.SuggestNext(context.Background(), m.loop.Session.Messages); err != nil {
+		t.Fatal(err)
+	}
+	if req := client.reqs[len(client.reqs)-1]; !req.NoThinking || req.MaxTokens > 100 {
+		t.Errorf("side call: NoThinking %v, MaxTokens %d", req.NoThinking, req.MaxTokens)
+	}
+}

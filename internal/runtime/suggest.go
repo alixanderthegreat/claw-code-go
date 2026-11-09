@@ -17,8 +17,9 @@ const suggestAsk = "[Not from the operator: a side request from the interface.] 
 // thinkRE is a reasoning model's thinking, when a server leaves it in the text.
 var thinkRE = regexp.MustCompile(`(?s)<think>.*?</think>`)
 
-// suggestMaxTokens leaves room for a model that thinks before it answers.
-const suggestMaxTokens = 400
+// suggestMaxTokens is enough for one line: the call asks for no thinking (a reasoning model
+// given 400 tokens spent them all thinking and wrote nothing, 2026-11-09).
+const suggestMaxTokens = 80
 
 // SuggestNext asks the model for the operator's likely next message after the turn that just
 // ended, or "" when it has none. The request is the turn's own - the same system prompt, tools
@@ -37,8 +38,9 @@ func (loop *ConversationLoop) SuggestNext(ctx context.Context, messages []api.Me
 			Role:    "user",
 			Content: []api.ContentBlock{{Type: "text", Text: suggestAsk}},
 		}),
-		Tools:  loop.allTools(),
-		Stream: true,
+		Tools:      loop.allTools(),
+		Stream:     true,
+		NoThinking: true,
 	}
 	ch, err := loop.Client.StreamResponse(ctx, req)
 	if err != nil {
