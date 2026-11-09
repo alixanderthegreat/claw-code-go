@@ -52,6 +52,9 @@ type GlobalConfig struct {
 	// SuggestNext shows the operator's likely next message as ghost text after each reply, Tab
 	// to take it (#32). Off unless set.
 	SuggestNext bool `json:"suggest_next"`
+	// SuggestModel is the model the suggestion asks, when it isn't the main one: a small, fast
+	// one is enough for one line from a short context. Empty is the main model.
+	SuggestModel string `json:"suggest_model"`
 }
 
 // GlobalConfigPath returns the path to ~/.config/claw-code-go/config.json.

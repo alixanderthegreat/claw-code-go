@@ -23,13 +23,18 @@ func suggestModel(t *testing.T) (Model, *recordingClient) {
 	return m, client
 }
 
-// The side call is the turn's own request - same system prompt and tools, the conversation as
-// it was - with one instruction added, so kronk's prefix cache matches all of it.
-func TestSuggestNextReusesTheTurn(t *testing.T) {
+// The side call reads a short context - the operator's last messages and the end of the last
+// reply - with no tools, not the conversation (greatproject #224): resent whole, it missed the
+// server's cache and read the whole conversation for one line.
+func TestSuggestNextReadsAShortContext(t *testing.T) {
 	m, client := suggestModel(t)
+	long := strings.Repeat("x", 20000)
 	m.loop.Session.Messages = []api.Message{
-		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "build it"}}},
-		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "Built. Merge it?"}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "first ask"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "1", Name: "bash"}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "1", Content: []api.ContentBlock{{Type: "text", Text: "TOOL OUTPUT"}}}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: long + " build it"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: long + " Built. Merge it?"}}},
 	}
 	before := len(m.loop.Session.Messages)
 	got, err := m.loop.SuggestNext(context.Background(), m.loop.Session.Messages)
@@ -40,12 +45,23 @@ func TestSuggestNextReusesTheTurn(t *testing.T) {
 		t.Error("the side call changed the conversation")
 	}
 	req := client.reqs[len(client.reqs)-1]
-	if len(req.Messages) != before+1 || req.Messages[before].Role != "user" ||
-		!strings.Contains(req.Messages[before].Content[0].Text, "next message") {
-		t.Errorf("request messages: %+v", req.Messages)
+	if len(req.Messages) != 1 || len(req.Tools) != 0 || req.Model != "m" {
+		t.Fatalf("request: %d messages, %d tools, model %q", len(req.Messages), len(req.Tools), req.Model)
 	}
-	if req.System != m.loop.SystemPrompt() || len(req.Tools) == 0 {
-		t.Error("the side call's system prompt or tools differ from the turn's: kronk's cache won't match")
+	text := req.Messages[0].Content[0].Text
+	for _, want := range []string{"first ask", "build it", "Merge it?", "next message"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("context lacks %q", want)
+		}
+	}
+	if strings.Contains(text, "TOOL OUTPUT") || len(text) > 6000 {
+		t.Errorf("context carries tool output, or isn't short: %d chars", len(text))
+	}
+	// With suggest_model set, that model is asked.
+	m.loop.Config.SuggestModel = "small"
+	m.loop.SuggestNext(context.Background(), m.loop.Session.Messages)
+	if req := client.reqs[len(client.reqs)-1]; req.Model != "small" {
+		t.Errorf("asked %q, not the suggestion's model", req.Model)
 	}
 	// Mid-turn (the last message isn't the model's): no call.
 	m.loop.Session.Messages = m.loop.Session.Messages[:1]
