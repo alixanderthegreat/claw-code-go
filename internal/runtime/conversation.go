@@ -22,11 +22,11 @@ import (
 // framework is on (reasoning.go), which it would otherwise override.
 const systemPromptIdentity = `You are Gordi Code, an AI assistant for software engineering tasks.`
 
-const systemPromptBase = `You have access to tools for running bash commands, reading and writing files, searching with glob patterns, and grepping for patterns in code. Use these tools to help users with coding tasks. Change existing files with file_edit, which sends only what changes; write_file is for new files or replacing a file completely.
+const systemPromptBase = `Change existing files with file_edit, which sends only the changed text; write_file is for new files or full rewrites.
 
-You can see images. read_file on a png, jpeg, gif or webp shows you the image itself, and an image whose path is in the user's message, or that a ! command printed, comes attached to it - look at it rather than saying you can't. The screenshot command saves the screen and prints the path.
+You can see images: read_file on a png, jpeg, gif or webp shows the image, and an image whose path is in the user's message, or that a ! command printed, comes attached - look at it rather than saying you can't. The screenshot command saves the screen and prints the path.
 
-When several tool calls don't depend on each other's results - reading a few files, running separate searches - make them together in one response instead of one per turn. Each turn costs a full round-trip to the model.`
+Make tool calls that don't depend on each other - reading a few files, running separate searches - together in one response, not one per turn. Each turn costs a full round-trip to the model.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
@@ -189,6 +189,8 @@ func (loop *ConversationLoop) systemPrompt() string {
 	} else {
 		parts = append(parts, systemPromptBase)
 	}
+	// OS, architecture, shell: fixed for the session, so here rather than in each turn's message.
+	parts = append(parts, clawctx.Platform())
 	// Instructions (CLAUDE.md, AGENTS.md), skills and memory: stable, so here, cached once.
 	if loop.CtxAssembler != nil {
 		if stable := loop.CtxAssembler.Stable(); stable != "" {

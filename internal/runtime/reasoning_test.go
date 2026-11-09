@@ -104,7 +104,7 @@ func TestPersonaModesDropTheIdentity(t *testing.T) {
 		if strings.Contains(sys, systemPromptIdentity) != keeps {
 			t.Errorf("mode %q: identity kept = %v, want %v", mode, !keeps, keeps)
 		}
-		if !strings.Contains(sys, "You have access to tools") {
+		if !strings.Contains(sys, "Change existing files with file_edit") {
 			t.Errorf("mode %q: tool guidance missing", mode)
 		}
 	}

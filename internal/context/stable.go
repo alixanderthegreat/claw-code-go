@@ -227,10 +227,10 @@ func StableSections(workDir string) Sections {
 		}
 	}
 	mem := "# Memory\n\n" +
-		"Facts worth keeping across sessions - who the user is, how they like to work, decisions, where things are - live in " +
-		tildePath(dir) + ", one file each, listed one line apiece in its MEMORY.md (`- [title](file.md) - one-line summary`). " +
-		"Save one with write_file when you learn something that will matter again and isn't in the code or git history, and add its line; " +
-		"update or remove a memory that turns out wrong. Read a memory's file when its line is relevant."
+		tildePath(dir) + ": one file per fact; MEMORY.md indexes them (`- [title](file.md) - summary`). " +
+		"Save what will matter again and isn't in the code or git history - who the user is, " +
+		"how they like to work, decisions, where things are - and add its index line. Fix or remove wrong ones. " +
+		"Read a memory's file when its index line is relevant."
 	if index != "" {
 		mem += "\n\nMEMORY.md:\n" + index
 		for _, line := range strings.Split(index, "\n") {
