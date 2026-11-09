@@ -73,6 +73,9 @@ type oaiRequest struct {
 	Stream        bool         `json:"stream"`
 	StreamOptions *streamOpts  `json:"stream_options,omitempty"`
 	MaxTokens     int          `json:"max_tokens,omitempty"`
+	// ChatTemplateKwargs reach the model's chat template on llama.cpp-style servers (kronk):
+	// {"enable_thinking": false} for a request with NoThinking.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 type streamOpts struct {
@@ -254,14 +257,18 @@ func (c *Client) buildRequest(req api.CreateMessageRequest) (*oaiRequest, error)
 	if c.blind.Load() {
 		messages = withoutImages(messages)
 	}
-	return &oaiRequest{
+	r := &oaiRequest{
 		Model:         model,
 		Messages:      messages,
 		Tools:         convertTools(req.Tools),
 		Stream:        true,
 		MaxTokens:     req.MaxTokens,
 		StreamOptions: &streamOpts{IncludeUsage: true},
-	}, nil
+	}
+	if req.NoThinking {
+		r.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	}
+	return r, nil
 }
 
 // convertMessages maps our Anthropic-style messages to the OpenAI message format.
