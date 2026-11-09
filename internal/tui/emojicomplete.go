@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 
 	"claw-code-go/internal/signs"
 )
@@ -70,6 +71,9 @@ func emojiMatches(q string, n int) []emojiMatch {
 	var out []emojiMatch
 	seen := map[string]bool{}
 	add := func(e, code string) bool {
+		if !steadyWidth(e) {
+			return false
+		}
 		// ☑ and ☑️ are one emoji: the second only asks for colour (U+FE0F).
 		if k := strings.TrimSuffix(e, "\ufe0f"); !seen[k] {
 			seen[k] = true
@@ -95,6 +99,20 @@ func emojiMatches(q string, n int) []emojiMatch {
 	}
 	return out
 }
+
+// steadyWidth says an emoji is two columns by every measure, so the row is as wide on screen as
+// it was laid out (#39). Joined sequences (👨‍🦯: three emoji and two zero-width joiners) are drawn
+// as their parts by many terminals, and a text symbol asking for emoji form (⁉️) is one column to
+// some measures and two to others; an emoji wider or narrower than planned shifts the row, and if
+// it wraps, the frame is a line taller than the screen. Those still resolve by their exact
+// shortcode; they're just not offered in the row.
+func steadyWidth(e string) bool {
+	return !strings.ContainsRune(e, '\u200d') && ansi.StringWidth(e) == 2 && runewidth.StringWidth(e) == 2
+}
+
+// completeMargin keeps the row this many columns short of the width, for a terminal that still
+// draws a glyph wider than the measures say.
+const completeMargin = 4
 
 // refreshComplete recomputes the row from the text before the cursor, after every edit.
 func (m *Model) refreshComplete() {
@@ -151,8 +169,8 @@ func (m Model) renderComplete() string {
 		}
 	}
 	line := b.String() + " ↑↓ choose · Enter insert · Esc"
-	if m.width > 0 {
-		line = ansi.Truncate(line, m.width, "…")
+	if m.width > completeMargin {
+		line = ansi.Truncate(line, m.width-completeMargin, "…")
 	}
 	return statusStyle.Render(line)
 }
