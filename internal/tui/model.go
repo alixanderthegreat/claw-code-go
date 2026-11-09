@@ -146,7 +146,8 @@ type Model struct {
 	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
-	signs    signPicker // Ctrl+G's palette of the twelve signs (#35)
+	signs    signPicker    // Ctrl+G's palette of the twelve signs (#35)
+	complete emojiComplete // the emoji row while a shortcode is typed (#37)
 
 	// history for ↑/↓ input navigation
 	history *inputHistory
@@ -585,6 +586,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.signs.open = true
 			return m, nil
 		}
+		if m.completing() {
+			if mm, cmd, used := m.handleCompleteKey(msg); used {
+				return mm, cmd
+			}
+		}
 	}
 
 	if msg.Type == tea.KeyShiftTab && m.state != stateLoginAPIKey {
@@ -736,6 +742,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// A typed ":" may close an emoji shortcode (#33). A paste is the operator's exact text.
 		if msg.Type == tea.KeyRunes && !msg.Paste && len(msg.Runes) > 0 && msg.Runes[len(msg.Runes)-1] == ':' {
 			m.resolveShortcode()
+		}
+		if !msg.Paste {
+			m.refreshComplete()
 		}
 		return m, cmd
 	}
@@ -1823,8 +1832,10 @@ func (m Model) renderInputArea() string {
 	prompt := inputPromptStyle.Render("> ")
 	tv := m.textarea.View()
 	lines := strings.Split(tv, "\n")
-	if m.signs.open && len(lines) > 1 {
-		// The palette takes the input's last row, so the layout's height doesn't change.
+	row := m.signs.open || m.completing()
+	if row && len(lines) > 1 {
+		// The palette or the emoji row takes the input's last row, so the layout's height doesn't
+		// change.
 		lines = lines[:len(lines)-1]
 	}
 	result := make([]string, len(lines))
@@ -1835,8 +1846,11 @@ func (m Model) renderInputArea() string {
 			result[i] = "  " + line
 		}
 	}
-	if m.signs.open {
+	switch {
+	case m.signs.open:
 		result = append(result, m.renderSignPicker())
+	case m.completing():
+		result = append(result, m.renderComplete())
 	}
 	return strings.Join(result, "\n")
 }
