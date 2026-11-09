@@ -148,6 +148,7 @@ type Model struct {
 	spinner  spinner.Model
 	signs    signPicker    // Ctrl+G's palette of the twelve signs (#35)
 	complete emojiComplete // the emoji row while a shortcode is typed (#37)
+	suggest  nextSuggestion // the likely next message, as ghost text (#32)
 
 	// history for ↑/↓ input navigation
 	history *inputHistory
@@ -242,7 +243,7 @@ type Model struct {
 // newInput is the message box.
 func newInput() textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message or /help..."
+	ta.Placeholder = inputPlaceholder
 	ta.CharLimit = 8192
 	ta.ShowLineNumbers = false
 	ta.SetHeight(textareaRows)
@@ -460,7 +461,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.refreshViewport()
 		// Update status bar with final token counts.
 		m = m.refreshViewport()
-		return m, m.speakReplyCmd()
+		return m, tea.Batch(m.speakReplyCmd(), m.suggestCmd())
+
+	case suggestionMsg:
+		m = m.showSuggestion(msg)
+		return m, nil
 
 	case streamWarnMsg:
 		m.viewBuf += renderBlock(warnStyle, fmt.Sprintf("Warning: %s", msg.text))
@@ -590,6 +595,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if mm, cmd, used := m.handleCompleteKey(msg); used {
 				return mm, cmd
 			}
+		}
+		// Tab on an empty input takes the suggestion showing in it (#32).
+		if msg.Type == tea.KeyTab && m.suggest.text != "" && m.textarea.Value() == "" {
+			return m.takeSuggestion(), nil
 		}
 	}
 
@@ -771,6 +780,7 @@ func (m Model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.textarea.Reset()
 	m.history.Push(text)
 	m.history.Reset()
+	m = m.endSuggestion(text)
 	return m.submitText(text)
 }
 
