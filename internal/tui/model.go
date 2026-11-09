@@ -1608,7 +1608,7 @@ func (m Model) viewAskUser() string {
 
 // startMessage begins a streaming conversation turn.
 func (m Model) startMessage(text string) (tea.Model, tea.Cmd) {
-	m.viewBuf += userLabelStyle.Render("You") + ": " + text + "\n\n"
+	m.viewBuf += userText(text, m.md)
 	// The runtime attaches any image whose path is in the message; say which, since
 	// the projector's first look at one adds seconds before the reply starts.
 	for _, path := range tools.ImagePathsIn(text) {
