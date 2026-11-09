@@ -40,19 +40,29 @@ type Ruleset struct {
 // Match returns the first Decision that matches the given tool and input summary.
 // Returns (DecisionAsk, false) when no rule matches.
 func (rs *Ruleset) Match(tool, input string) (Decision, bool) {
-	if rs == nil {
-		return DecisionAsk, false
+	if r := rs.MatchRule(tool, input); r != nil {
+		return r.Decision, true
 	}
-	for _, r := range rs.Rules {
+	return DecisionAsk, false
+}
+
+// MatchRule returns the first rule matching the given tool and input summary, or nil. A refusal
+// names it, so the model knows which action is fenced, not only which tool (#30).
+func (rs *Ruleset) MatchRule(tool, input string) *Rule {
+	if rs == nil {
+		return nil
+	}
+	for i := range rs.Rules {
+		r := &rs.Rules[i]
 		if r.Tool != "*" && r.Tool != tool {
 			continue
 		}
 		if r.Pattern != "" && !strings.Contains(input, r.Pattern) {
 			continue
 		}
-		return r.Decision, true
+		return r
 	}
-	return DecisionAsk, false
+	return nil
 }
 
 // settingsFile is the on-disk format for .claude/settings.json.

@@ -574,7 +574,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			// Not for ask_user: all it does is ask the user, and their answer is the consent -
 			// asking permission to ask hid the question in a box that cut it short.
 			if loop.PermManager != nil && tb.name != "ask_user" {
-				decision := loop.PermManager.Check(tb.name, RuleInput(inputMap))
+				decision, rule := loop.PermManager.CheckRule(tb.name, RuleInput(inputMap))
 
 				// Plan mode: describe without executing.
 				if loop.PermManager.Mode == permissions.ModePlan {
@@ -592,7 +592,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 					denied := api.ContentBlock{
 						Type:      "tool_result",
 						ToolUseID: tb.id,
-						Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
+						Content:   []api.ContentBlock{{Type: "text", Text: refusalText(refusedByRule, tb.name, rule)}},
 						IsError:   true,
 					}
 					toolResults = append(toolResults, denied)
@@ -628,7 +628,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						denied := api.ContentBlock{
 							Type:      "tool_result",
 							ToolUseID: tb.id,
-							Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", tb.name)}},
+							Content:   []api.ContentBlock{{Type: "text", Text: refusalText(refusedUnattended, tb.name, nil)}},
 							IsError:   true,
 						}
 						toolResults = append(toolResults, denied)
@@ -642,7 +642,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						toolResults = append(toolResults, api.ContentBlock{
 							Type:      "tool_result",
 							ToolUseID: tb.id,
-							Content:   []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s. %s", tb.name, toolStoppedNote)}},
+							Content:   []api.ContentBlock{{Type: "text", Text: refusalText(refusedByOperator, tb.name, nil) + " " + toolStoppedNote}},
 							IsError:   true,
 						})
 						loop.appendToolResults(toolResults, unrunFrom(i+1), toolStoppedNote)
@@ -865,7 +865,7 @@ func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) ap
 	if !CheckPermission(loop.Permissions, name) {
 		return api.ContentBlock{
 			Type:    "tool_result",
-			Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("Permission denied for tool: %s", name)}},
+			Content: []api.ContentBlock{{Type: "text", Text: refusalText(refusedByRule, name, nil)}},
 			IsError: true,
 		}
 	}

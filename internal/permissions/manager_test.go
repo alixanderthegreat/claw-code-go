@@ -64,3 +64,20 @@ func TestLoadLayeredUserFirst(t *testing.T) {
 		t.Errorf("missing user layer: %d rules, err %v; want 1 rule, no error", len(rs.Rules), err)
 	}
 }
+
+// TestCheckRuleNamesTheDenyRule: a refusal can name the rule that fenced the call, in bypass mode
+// as in default, and the rule wins over a remembered "always" (#30).
+func TestCheckRuleNamesTheDenyRule(t *testing.T) {
+	rules := &Ruleset{Rules: []Rule{{Tool: "bash", Pattern: "git push", Decision: DecisionDeny}}}
+	for _, mode := range []PermissionMode{ModeDefault, ModeBypassPermissions, ModeAcceptEdits} {
+		m := NewManager(mode, rules)
+		m.Remember("bash", "", DecisionAllow, ScopeAlways)
+		d, r := m.CheckRule("bash", "git push origin main")
+		if d != DecisionDeny || r == nil || r.Pattern != "git push" {
+			t.Errorf("%s: got %v, %+v; want deny by the git push rule", mode, d, r)
+		}
+		if d, r := m.CheckRule("bash", "git status"); d == DecisionDeny || r != nil {
+			t.Errorf("%s: git status got %v, %+v; want no rule", mode, d, r)
+		}
+	}
+}

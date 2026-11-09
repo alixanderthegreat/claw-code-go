@@ -23,7 +23,7 @@ type PermDecision int
 const (
 	PermDecisionAllowOnce   PermDecision = iota // allow this single invocation
 	PermDecisionAllowAlways                     // allow this tool for the rest of the session
-	PermDecisionDeny                            // deny execution
+	PermDecisionDeny                            // deny execution: no one was there to ask (an unattended run)
 	PermDecisionDenyAndStop                     // deny execution and end the turn, returning control to the user
 )
 
