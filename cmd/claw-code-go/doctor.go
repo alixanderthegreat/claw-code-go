@@ -13,6 +13,7 @@ import (
 
 	"claw-code-go/internal/config"
 	ctxpkg "claw-code-go/internal/context"
+	"claw-code-go/internal/handoff"
 	"claw-code-go/internal/runtime"
 	"claw-code-go/internal/voice"
 )
@@ -84,7 +85,24 @@ func doctor() []check {
 	}
 
 	out = append(out, toolsCheck(ctxpkg.Tools()))
+	out = append(out, handoffCheck(handoff.Dir(), wd))
 	return out
+}
+
+// handoffCheck says whether /handoff has anything here. No condenser on this machine is off, not
+// broken: the handoffs come from a nightly run that only some machines have.
+func handoffCheck(dir, wd string) check {
+	if _, err := os.Stat(dir); err != nil {
+		return check{"handoff", "off", dir + " doesn't exist: no condensed Claude Code sessions on this machine"}
+	}
+	all, err := handoff.List(dir, wd)
+	if err != nil {
+		return check{"handoff", "FAIL", err.Error()}
+	}
+	if len(all) == 0 {
+		return check{"handoff", "ok", "none for this folder yet (" + dir + ")"}
+	}
+	return check{"handoff", "ok", fmt.Sprintf("%d for this folder, the newest %s: /handoff loads it", len(all), handoff.Describe(all[0]))}
 }
 
 // modelCheck asks the server for its models and looks for the configured one.

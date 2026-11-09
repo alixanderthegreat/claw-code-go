@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,5 +72,21 @@ func TestToolsCheck(t *testing.T) {
 	some := []ctxpkg.Tool{{Name: "speak", OnPath: true}, {Name: "transcribe"}, {Name: "consult"}}
 	if c := toolsCheck(some); c.status != "warn" || c.detail != "1 of 3 on PATH; not here: transcribe, consult" {
 		t.Errorf("some missing: %s %q", c.status, c.detail)
+	}
+}
+
+func TestHandoffCheck(t *testing.T) {
+	dir := t.TempDir()
+	if c := handoffCheck(filepath.Join(dir, "missing"), "/w"); c.status != "off" {
+		t.Errorf("no condenser: %+v", c)
+	}
+	if c := handoffCheck(dir, "/w"); c.status != "ok" || !strings.Contains(c.detail, "none for this folder") {
+		t.Errorf("none here: %+v", c)
+	}
+	p := filepath.Join(dir, "-w", "abc12345-x", "handoff.md")
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	os.WriteFile(p, []byte("# h\n**Original size:** 2.0 MB, 9 messages (3 operator turns, 4 API responses)\n"), 0o600)
+	if c := handoffCheck(dir, "/w"); c.status != "ok" || !strings.Contains(c.detail, "1 for this folder") || !strings.Contains(c.detail, "abc12345") {
+		t.Errorf("one here: %+v", c)
 	}
 }

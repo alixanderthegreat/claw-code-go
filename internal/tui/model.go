@@ -3,6 +3,7 @@ package tui
 import (
 	"claw-code-go/internal/auth"
 	"claw-code-go/internal/config"
+	"claw-code-go/internal/handoff"
 	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
 	"claw-code-go/internal/tools"
@@ -912,6 +913,9 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 	case "/compact":
 		return m.startCompact()
 
+	case "/handoff":
+		return m.handleHandoff(parts)
+
 	case "/mode":
 		return m.handleModeCommand(parts)
 
@@ -926,6 +930,53 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 		m = m.refreshViewport()
 		return m, nil
 	}
+}
+
+// handoffPrompt goes ahead of a handoff, so the model takes it as the state of the work, not a task.
+const handoffPrompt = "Below is a condensed handoff of a Claude Code session in this folder, written by a local model " +
+	"from the session's transcript. Its verbatim sections are copied from the session; the rest is the model's " +
+	"reading, so check anything before you act on it. Take it as where the work stands: say in two or three lines " +
+	"what you take the current state and the next step to be, then wait for the operator."
+
+// handleHandoff loads the condensed handoff of a Claude Code session in this folder (internal/handoff):
+// the latest, or the session whose id starts with parts[1]. It's sent as the turn's message, so Gordi
+// picks up where that session left off; only a line about it is shown.
+func (m Model) handleHandoff(parts []string) (tea.Model, tea.Cmd) {
+	prefix := ""
+	if len(parts) > 1 {
+		prefix = parts[1]
+	}
+	if !handoff.Local(m.cfg.BaseURL) {
+		m.viewBuf += renderBlock(errorStyle, "/handoff: this session's model isn't local (base_url "+
+			strconv.Quote(m.cfg.BaseURL)+"). A handoff can hold summaries of client material, so it goes only to a local model.")
+		m = m.refreshViewport()
+		return m, nil
+	}
+	wd, _ := os.Getwd()
+	text, e, all, err := handoff.Load(handoff.Dir(), wd, prefix)
+	if err != nil {
+		msg := fmt.Sprintf("/handoff: %v in %s", err, filepath.Join(handoff.Dir(), handoff.ProjectKey(wd)))
+		if len(all) > 0 {
+			msg += "\nThis folder has (/handoff ID loads one):"
+			for _, a := range all {
+				msg += "\n  " + handoff.Describe(a)
+			}
+		}
+		m.viewBuf += renderBlock(errorStyle, msg)
+		m = m.refreshViewport()
+		return m, nil
+	}
+	msg := fmt.Sprintf("Handoff of session %s loaded (%d KB, about %s tokens).", handoff.Describe(e), len(text)/1000, formatNum(len(text)/4))
+	if len(all) > 1 {
+		msg += "\nOthers here (/handoff ID loads one):"
+		for _, a := range all {
+			if a.ID != e.ID {
+				msg += "\n  " + handoff.Describe(a)
+			}
+		}
+	}
+	m.viewBuf += renderBlock(statusStyle, msg)
+	return m.startTurn(handoffPrompt + "\n\n" + text)
 }
 
 // handleSessionCommand handles /session list|save|load <name>.
@@ -1139,7 +1190,7 @@ func (m *Model) configSet(key, value string) error {
 	case "theme":
 		m.cfg.Theme = value
 		s.Theme = value
-		ApplyTheme(value) // "auto"/"" detects the terminal background
+		ApplyTheme(value)  // "auto"/"" detects the terminal background
 		m.repaintHistory() // recolor the scrollback, not just new output
 	default:
 		return fmt.Errorf("unknown config key %q (valid: model, permissionMode, contextWindow, theme)", key)
@@ -1795,6 +1846,7 @@ func (m Model) viewHelp() string {
 		statusStyle.Render("Session"),
 		"  "+userLabelStyle.Render("/clear")+"                          Clear conversation history",
 		"  "+userLabelStyle.Render("/compact")+"                        Summarize older history now, freeing context",
+		"  "+userLabelStyle.Render("/handoff")+" [session]              Pick up a Claude Code session here from its condensed handoff",
 		"  "+userLabelStyle.Render("/session")+" list                   List saved sessions",
 		"  "+userLabelStyle.Render("/session")+" save [name]            Save current session",
 		"  "+userLabelStyle.Render("/session")+" load <name>            Load a saved session",
