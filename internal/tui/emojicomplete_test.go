@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestShortcodeQuery(t *testing.T) {
@@ -39,18 +40,16 @@ func TestEmojiMatches(t *testing.T) {
 	if ms := emojiMatches("checkered", completeMax); len(ms) == 0 || ms[0].Emoji != "🏁" {
 		t.Errorf(":checkered -> %v, want 🏁 first", ms)
 	}
-	// "chec" reaches ☑ through two codes, one with the colour selector: offered once.
-	n := 0
-	for _, m := range ms {
-		if strings.TrimSuffix(m.Emoji, "\ufe0f") == "☑" {
-			n++
+	// One entry per emoji, the colour selector aside, whatever the query.
+	for _, q := range []string{"chec", "heart", "sm", "star", "ar"} {
+		seen := map[string]string{}
+		for _, m := range emojiMatches(q, completeMax) {
+			k := strings.TrimSuffix(m.Emoji, "\ufe0f")
+			if c, ok := seen[k]; ok {
+				t.Errorf(":%s offers %s twice (%s, %s)", q, m.Emoji, c, m.Code)
+			}
+			seen[k] = m.Code
 		}
-	}
-	if n != 1 {
-		t.Errorf("☑ offered %d times in %v", n, codes)
-	}
-	if st := emojiMatches("st", completeMax); len(st) == 0 || st[0].Code != ":stuck:" {
-		t.Errorf(":st -> %v, want the sign :stuck: first", st)
 	}
 	seen := map[string]bool{}
 	for _, m := range emojiMatches("smile", completeMax) {
@@ -105,5 +104,33 @@ func TestEmojiCompleteTyped(t *testing.T) {
 	closed := strings.Count(typeText(shortcodeModel(), "ship").renderInputArea(), "\n")
 	if open := strings.Count(typeText(shortcodeModel(), ":chec").renderInputArea(), "\n"); open != closed {
 		t.Errorf("input area %d lines with the row, %d without", open+1, closed+1)
+	}
+}
+
+// The row offers only emoji every measure agrees are two columns, and stays short of the width,
+// so it can't wrap and grow the frame (#39).
+func TestEmojiRowWidth(t *testing.T) {
+	var got []string
+	for _, m := range emojiMatches("rob", completeMax) {
+		got = append(got, m.Emoji)
+		if !steadyWidth(m.Emoji) {
+			t.Errorf("%s %s offered: its width isn't steady", m.Emoji, m.Code)
+		}
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "🤖") || strings.Contains(joined, "⁉") || strings.Contains(joined, "\u200d") {
+		t.Errorf(":rob -> %q: want 🤖, and no ⁉️ or joined sequence", joined)
+	}
+	if e, n := shortcodeAt([]rune(":interrobang:")); n == 0 || e == "" {
+		t.Error("an emoji left out of the row no longer resolves by its exact shortcode")
+	}
+	for _, w := range []int{40, 80, 120} {
+		m := typeText(shortcodeModel(), ":s")
+		m = typeText(m, "m")
+		m.width = w
+		lines := strings.Split(m.renderInputArea(), "\n")
+		if lw := ansi.StringWidth(lines[len(lines)-1]); lw > w-completeMargin {
+			t.Errorf("width %d: the row is %d wide", w, lw)
+		}
 	}
 }
