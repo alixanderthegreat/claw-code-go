@@ -24,7 +24,15 @@ func NewManager(mode PermissionMode, rules *Ruleset) *Manager {
 	}
 }
 
-// Check returns the Decision for the given tool and input summary.
+// Check returns the Decision for the given tool and input summary; CheckRule says which rule
+// decided it.
+func (m *Manager) Check(tool, input string) Decision {
+	d, _ := m.CheckRule(tool, input)
+	return d
+}
+
+// CheckRule returns the Decision for the given tool and input summary, and the rule that decided
+// it (nil when no rule did: a mode, a remembered answer, or nothing matched).
 //
 //   - BypassPermissions → Allow, UNLESS the ruleset explicitly denies this tool
 //     (kata 84 Test 2: bypass used to short-circuit before ever consulting the
@@ -33,32 +41,35 @@ func NewManager(mode PermissionMode, rules *Ruleset) *Manager {
 //     web_search while still allowing bash/read/write/edit with no prompting)
 //   - Plan             → always Deny
 //   - Otherwise        → a deny rule, then the session cache, then the ruleset, then Ask
-func (m *Manager) Check(tool, input string) Decision {
+func (m *Manager) CheckRule(tool, input string) (Decision, *Rule) {
+	rule := m.Rules.MatchRule(tool, input)
+	denied := rule != nil && rule.Decision == DecisionDeny
+
 	switch m.Mode {
 	case ModeBypassPermissions:
-		if d, ok := m.Rules.Match(tool, input); ok && d == DecisionDeny {
-			return DecisionDeny
+		if denied {
+			return DecisionDeny, rule
 		}
-		return DecisionAllow
+		return DecisionAllow, nil
 	case ModePlan:
-		return DecisionDeny
+		return DecisionDeny, nil
 	}
 
 	// A deny rule wins over a remembered "always": allowing bash for the session mustn't
 	// switch off a rule that denies one kind of bash command.
-	if d, ok := m.Rules.Match(tool, input); ok && d == DecisionDeny {
-		return DecisionDeny
+	if denied {
+		return DecisionDeny, rule
 	}
 
 	m.mu.Lock()
 	if d, ok := m.cache[tool]; ok {
 		m.mu.Unlock()
-		return d
+		return d, nil
 	}
 	m.mu.Unlock()
 
-	if d, ok := m.Rules.Match(tool, input); ok {
-		return d
+	if rule != nil {
+		return rule.Decision, rule
 	}
 
 	// AcceptEdits: auto-allow read-only and edit tools, ask for bash. file_edit
@@ -66,11 +77,11 @@ func (m *Manager) Check(tool, input string) Decision {
 	if m.Mode == ModeAcceptEdits {
 		switch tool {
 		case "read_file", "glob", "grep", "write_file", "file_edit":
-			return DecisionAllow
+			return DecisionAllow, nil
 		}
 	}
 
-	return DecisionAsk
+	return DecisionAsk, nil
 }
 
 // Remember stores a user decision in the session cache for ScopeAlways grants.
