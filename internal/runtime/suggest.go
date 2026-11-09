@@ -21,24 +21,41 @@ var thinkRE = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // given 400 tokens spent them all thinking and wrote nothing, 2026-11-09).
 const suggestMaxTokens = 80
 
-// SuggestNext asks the model for the operator's likely next message after the turn that just
-// ended, or "" when it has none. The request is the turn's own - the same system prompt, tools
-// and messages - with one instruction added at the end, so a server that caches by prefix
-// (kronk) reuses the whole conversation and reads only the new tokens. messages is a copy taken
-// when the turn ended; the loop's own history is not touched.
+// What the suggestion reads (#32, greatproject #224): the end of the last reply and the operator's
+// last few messages, not the conversation. Resending the whole turn to reuse a server's cached
+// prefix didn't work: the suggestion asks without thinking, the turns think, and a template that
+// renders past turns differently in the two modes leaves only the system prompt cached - the
+// suggestion read ~27k tokens to write one line, and pushed the conversation out of the cache the
+// next turn wanted. A short context costs little on any model, and fits a small one.
+const (
+	suggestReplyChars = 3000 // the end of the last reply
+	suggestUserChars  = 600  // the end of each operator message: their words come after the context prepended to it
+	suggestUserTurns  = 3
+)
+
+const suggestSystem = "You guess what a person will type next to their assistant, from the end of their conversation. " +
+	"Answer with one short line in their words, or nothing if you can't tell."
+
+// SuggestNext asks for the operator's likely next message after the turn that just ended, or ""
+// when there is none. It asks Config.SuggestModel when set (a small model is enough), else the main
+// model, with a short context (suggestContext) and no tools. messages is a copy taken when the turn
+// ended; the loop's own history is not touched.
 func (loop *ConversationLoop) SuggestNext(ctx context.Context, messages []api.Message) (string, error) {
 	if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
 		return "", nil
 	}
+	model := loop.Config.Model
+	if loop.Config.SuggestModel != "" {
+		model = loop.Config.SuggestModel
+	}
 	req := api.CreateMessageRequest{
-		Model:     loop.Config.Model,
+		Model:     model,
 		MaxTokens: suggestMaxTokens,
-		System:    loop.systemPrompt(),
-		Messages: append(messages[:len(messages):len(messages)], api.Message{
+		System:    suggestSystem,
+		Messages: []api.Message{{
 			Role:    "user",
-			Content: []api.ContentBlock{{Type: "text", Text: suggestAsk}},
-		}),
-		Tools:      loop.allTools(),
+			Content: []api.ContentBlock{{Type: "text", Text: suggestContext(messages) + "\n\n" + suggestAsk}},
+		}},
 		Stream:     true,
 		NoThinking: true,
 	}
@@ -51,6 +68,48 @@ func (loop *ConversationLoop) SuggestNext(ctx context.Context, messages []api.Me
 		return "", err
 	}
 	return cleanSuggestion(text), nil
+}
+
+// suggestContext is what the suggestion reads: the operator's last few messages (their text only,
+// the end of each, oldest first) and the end of the assistant's last reply.
+func suggestContext(messages []api.Message) string {
+	var users []string
+	for i := len(messages) - 1; i >= 0 && len(users) < suggestUserTurns; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		if t := strings.TrimSpace(blockText(messages[i])); t != "" {
+			users = append(users, tail(t, suggestUserChars))
+		}
+	}
+	var b strings.Builder
+	b.WriteString("The operator's last messages, oldest first:\n")
+	for i := len(users) - 1; i >= 0; i-- {
+		b.WriteString("<<<\n" + users[i] + "\n>>>\n")
+	}
+	b.WriteString("\nThe end of the assistant's last reply:\n<<<\n" +
+		tail(strings.TrimSpace(blockText(messages[len(messages)-1])), suggestReplyChars) + "\n>>>")
+	return b.String()
+}
+
+// blockText is a message's text blocks, joined: not tool calls or their results.
+func blockText(m api.Message) string {
+	var parts []string
+	for _, c := range m.Content {
+		if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
+			parts = append(parts, c.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// tail is the last n runes of s, marked when cut.
+func tail(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "[...] " + string(r[len(r)-n:])
 }
 
 // cleanSuggestion is the reply's first non-empty line, without quotes or a "Operator:" label, at

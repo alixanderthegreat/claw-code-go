@@ -84,6 +84,8 @@ type Config struct {
 	SpeechVoice string
 	// SuggestNext: after each reply, the likely next message as ghost text (#32).
 	SuggestNext bool
+	// SuggestModel: the model the suggestion asks; empty is Model.
+	SuggestModel string
 }
 
 // LoadConfig reads configuration from layered settings files, the global
@@ -126,6 +128,7 @@ func LoadConfig() *Config {
 		cfg.STTModel = gc.STTModel
 		cfg.SpeechVoice = gc.SpeechVoice
 		cfg.SuggestNext = gc.SuggestNext
+		cfg.SuggestModel = gc.SuggestModel
 		cfg.Theme = gc.Theme
 	}
 
