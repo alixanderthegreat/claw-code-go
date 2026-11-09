@@ -954,12 +954,34 @@ func (m Model) handleHandoff(parts []string) (tea.Model, tea.Cmd) {
 	}
 	wd, _ := os.Getwd()
 	text, e, all, err := handoff.Load(handoff.Dir(), wd, prefix)
+	if err != nil && prefix != "" {
+		// A session id is unique: look for it in every folder's handoffs.
+		if found, ferr := handoff.Find(handoff.Dir(), prefix); ferr == nil && len(found) == 1 {
+			if b, rerr := os.ReadFile(found[0].Path); rerr == nil {
+				text, e, all, err = string(b), found[0], nil, nil
+				m.viewBuf += renderBlock(statusStyle, "Not this folder's: found in "+handoff.Folder(e)+".")
+			}
+		} else if len(found) > 1 {
+			msg := "/handoff: " + prefix + " matches several sessions; give more of the id:"
+			for _, f := range found {
+				msg += "\n  " + handoff.Describe(f) + "  (" + handoff.Folder(f) + ")"
+			}
+			m.viewBuf += renderBlock(errorStyle, msg)
+			m = m.refreshViewport()
+			return m, nil
+		}
+	}
 	if err != nil {
 		msg := fmt.Sprintf("/handoff: %v in %s", err, filepath.Join(handoff.Dir(), handoff.ProjectKey(wd)))
 		if len(all) > 0 {
 			msg += "\nThis folder has (/handoff ID loads one):"
 			for _, a := range all {
 				msg += "\n  " + handoff.Describe(a)
+			}
+		} else if ps := handoff.Projects(handoff.Dir()); len(ps) > 0 {
+			msg += "\nFolders with handoffs (run Gordi there, or /handoff SESSION-ID from anywhere):"
+			for _, p := range ps {
+				msg += "\n  " + p
 			}
 		}
 		m.viewBuf += renderBlock(errorStyle, msg)

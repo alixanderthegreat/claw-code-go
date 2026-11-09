@@ -136,6 +136,48 @@ func Load(dir, wd, prefix string) (string, Entry, []Entry, error) {
 	return string(b), pick, all, nil
 }
 
+// Find looks for a session's handoff in every folder, by its id prefix: a session id is unique, so
+// /handoff ID works from anywhere. It returns the matches, newest first.
+func Find(dir, prefix string) ([]Entry, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*", prefix+"*", "handoff.md"))
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, f := range files {
+		st, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		e := Entry{ID: filepath.Base(filepath.Dir(f)), Path: f, Written: st.ModTime()}
+		e.Size, e.Turns = header(f)
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Written.After(out[j].Written) })
+	return out, nil
+}
+
+// Projects lists the folders that have a handoff, as Claude Code names them, newest first.
+func Projects(dir string) []string {
+	files, _ := filepath.Glob(filepath.Join(dir, "*", "latest-handoff.md"))
+	sort.Slice(files, func(i, j int) bool {
+		a, _ := os.Stat(files[i])
+		b, _ := os.Stat(files[j])
+		return a != nil && b != nil && a.ModTime().After(b.ModTime())
+	})
+	var out []string
+	for _, f := range files {
+		out = append(out, filepath.Base(filepath.Dir(f)))
+	}
+	return out
+}
+
+// Folder is the project name a handoff's path sits under.
+func Folder(e Entry) string { return filepath.Base(filepath.Dir(filepath.Dir(e.Path))) }
+
 // Short is an id cut to the length /handoff takes.
 func Short(id string) string {
 	if len(id) > 8 {
