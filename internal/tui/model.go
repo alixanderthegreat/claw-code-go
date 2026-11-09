@@ -146,6 +146,7 @@ type Model struct {
 	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
+	signs    signPicker // Ctrl+G's palette of the twelve signs (#35)
 
 	// history for ↑/↓ input navigation
 	history *inputHistory
@@ -572,6 +573,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlO && (m.state == stateInput || m.state == stateBusy) {
 		m = m.openDetails()
 		return m, nil
+	}
+
+	// Ctrl+G opens the sign picker over the input, while typing or mid-turn; while it's open, keys
+	// go to it.
+	if m.state == stateInput || m.state == stateBusy {
+		if m.signs.open {
+			return m.handleSignKey(msg)
+		}
+		if msg.Type == tea.KeyCtrlG {
+			m.signs.open = true
+			return m, nil
+		}
 	}
 
 	if msg.Type == tea.KeyShiftTab && m.state != stateLoginAPIKey {
@@ -1810,6 +1823,10 @@ func (m Model) renderInputArea() string {
 	prompt := inputPromptStyle.Render("> ")
 	tv := m.textarea.View()
 	lines := strings.Split(tv, "\n")
+	if m.signs.open && len(lines) > 1 {
+		// The palette takes the input's last row, so the layout's height doesn't change.
+		lines = lines[:len(lines)-1]
+	}
 	result := make([]string, len(lines))
 	for i, line := range lines {
 		if i == 0 {
@@ -1817,6 +1834,9 @@ func (m Model) renderInputArea() string {
 		} else {
 			result[i] = "  " + line
 		}
+	}
+	if m.signs.open {
+		result = append(result, m.renderSignPicker())
 	}
 	return strings.Join(result, "\n")
 }

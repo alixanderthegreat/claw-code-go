@@ -6,10 +6,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyokomi/emoji/v2"
+
+	"claw-code-go/internal/signs"
 )
 
 // Emoji shortcodes resolve as they're typed (#33): most terminals have no emoji picker, so
-// `:checkered_flag:` is the way to type 🏁. The set is GitHub's and Slack's.
+// `:checkered_flag:` is the way to type 🏁. The set is GitHub's and Slack's, after the twelve
+// signs of the starting language (`:stuck:` -> 🧱).
 var shortcodes = sync.OnceValue(emoji.CodeMap)
 
 // shortcodeAt looks at the text before the cursor. If it ends with a known shortcode that just
@@ -38,7 +41,11 @@ func shortcodeAt(before []rune) (string, int) {
 	if strings.Count(string(before[:open]), "`")%2 == 1 {
 		return "", 0
 	}
-	e, ok := shortcodes()[string(before[open:])]
+	code := string(before[open:])
+	e, ok := signs.SignCode(code) // the language's own signs first (#35)
+	if !ok {
+		e, ok = shortcodes()[code]
+	}
 	if !ok {
 		return "", 0
 	}
