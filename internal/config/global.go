@@ -49,6 +49,9 @@ type GlobalConfig struct {
 	// SpeechVoice is the voice Gordi speaks in (the speech service's F1-F5, M1-M5). Empty is
 	// the service's default, which is Mary's.
 	SpeechVoice string `json:"speech_voice"`
+	// SuggestNext shows the operator's likely next message as ghost text after each reply, Tab
+	// to take it (#32). Off unless set.
+	SuggestNext bool `json:"suggest_next"`
 }
 
 // GlobalConfigPath returns the path to ~/.config/claw-code-go/config.json.

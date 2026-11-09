@@ -82,6 +82,8 @@ type Config struct {
 	STTModel  string
 	// SpeechVoice is the voice replies are spoken in; empty is the speech service's default.
 	SpeechVoice string
+	// SuggestNext: after each reply, the likely next message as ghost text (#32).
+	SuggestNext bool
 }
 
 // LoadConfig reads configuration from layered settings files, the global
@@ -123,6 +125,7 @@ func LoadConfig() *Config {
 		cfg.VoiceMode = gc.VoiceMode
 		cfg.STTModel = gc.STTModel
 		cfg.SpeechVoice = gc.SpeechVoice
+		cfg.SuggestNext = gc.SuggestNext
 		cfg.Theme = gc.Theme
 	}
 
