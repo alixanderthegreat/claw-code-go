@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"claw-code-go/internal/signs"
 )
 
 func TestShortcodeQuery(t *testing.T) {
@@ -117,6 +119,21 @@ func TestEmojiRowWidth(t *testing.T) {
 			t.Errorf("%s %s offered: its width isn't steady", m.Emoji, m.Code)
 		}
 	}
+	for _, m := range emojiMatches("wav", completeMax) {
+		if !steadyWidth(m.Emoji) || len([]rune(strings.TrimSuffix(m.Emoji, "\ufe0f"))) != 1 {
+			t.Errorf(":wav offers %s %s, built from several code points", m.Emoji, m.Code)
+		}
+	}
+	for _, e := range []string{"👋🏻", "🏴\U000E0067\U000E0062\U000E0077\U000E006C\U000E0073\U000E007F", "🇺🇸", "1️⃣", "👨‍🦯", "⁉️"} {
+		if steadyWidth(e) {
+			t.Errorf("%q counted steady", e)
+		}
+	}
+	for _, e := range []string{"👋", "🤖", "🌊", "✅", "🧱"} {
+		if !steadyWidth(e) {
+			t.Errorf("%q counted unsteady", e)
+		}
+	}
 	joined := strings.Join(got, " ")
 	if !strings.Contains(joined, "🤖") || strings.Contains(joined, "⁉") || strings.Contains(joined, "\u200d") {
 		t.Errorf(":rob -> %q: want 🤖, and no ⁉️ or joined sequence", joined)
@@ -131,6 +148,15 @@ func TestEmojiRowWidth(t *testing.T) {
 		lines := strings.Split(m.renderInputArea(), "\n")
 		if lw := ansi.StringWidth(lines[len(lines)-1]); lw > w-completeMargin {
 			t.Errorf("width %d: the row is %d wide", w, lw)
+		}
+	}
+}
+
+// The twelve signs are drawn together in Ctrl+G's palette, so each must be steady too.
+func TestSignsAreSteady(t *testing.T) {
+	for _, s := range signs.Signs {
+		if !steadyWidth(s.Emoji) {
+			t.Errorf("sign %s %s isn't of steady width", s.Emoji, s.Code)
 		}
 	}
 }

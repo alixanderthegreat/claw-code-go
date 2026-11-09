@@ -100,14 +100,19 @@ func emojiMatches(q string, n int) []emojiMatch {
 	return out
 }
 
-// steadyWidth says an emoji is two columns by every measure, so the row is as wide on screen as
-// it was laid out (#39). Joined sequences (👨‍🦯: three emoji and two zero-width joiners) are drawn
-// as their parts by many terminals, and a text symbol asking for emoji form (⁉️) is one column to
-// some measures and two to others; an emoji wider or narrower than planned shifts the row, and if
-// it wraps, the frame is a line taller than the screen. Those still resolve by their exact
+// steadyWidth says an emoji is drawn two columns wide by any terminal, so the row is as wide on
+// screen as it was laid out (#39). Only a single code point holds that: anything built from
+// several - joined sequences (👨‍🦯), skin tones (👋🏻 is 👋 and a modifier), flags (pairs of
+// letters, or 🏴 and tag characters), keycaps - is drawn as its parts by many terminals, while
+// every width measure calls it two. A text symbol asking for emoji form (⁉️) is one column to
+// some measures, so the width must also be two by both. A wider or narrower glyph shifts the row,
+// and if it wraps, the frame is a line taller than the screen. Those still resolve by their exact
 // shortcode; they're just not offered in the row.
 func steadyWidth(e string) bool {
-	return !strings.ContainsRune(e, '\u200d') && ansi.StringWidth(e) == 2 && runewidth.StringWidth(e) == 2
+	if r := []rune(strings.TrimSuffix(e, "\ufe0f")); len(r) != 1 {
+		return false
+	}
+	return ansi.StringWidth(e) == 2 && runewidth.StringWidth(e) == 2
 }
 
 // completeMargin keeps the row this many columns short of the width, for a terminal that still
