@@ -720,6 +720,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.history.Reset()
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
+		// A typed ":" may close an emoji shortcode (#33). A paste is the operator's exact text.
+		if msg.Type == tea.KeyRunes && !msg.Paste && len(msg.Runes) > 0 && msg.Runes[len(msg.Runes)-1] == ':' {
+			m.resolveShortcode()
+		}
 		return m, cmd
 	}
 }
