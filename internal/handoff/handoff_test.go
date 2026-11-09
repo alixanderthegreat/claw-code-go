@@ -79,3 +79,22 @@ func TestLocal(t *testing.T) {
 		}
 	}
 }
+
+func TestFindAnywhere(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	write(t, filepath.Join(dir, "-a", "b4a3e097-big", "handoff.md"), doc("209.6 MB", "1135", "big"), now)
+	write(t, filepath.Join(dir, "-a", "latest-handoff.md"), doc("209.6 MB", "1135", "big"), now)
+	write(t, filepath.Join(dir, "-b", "c1c00183-small", "handoff.md"), doc("1.4 MB", "10", "small"), now.Add(-time.Hour))
+	write(t, filepath.Join(dir, "-b", "latest-handoff.md"), doc("1.4 MB", "10", "small"), now.Add(-time.Hour))
+	got, err := Find(dir, "b4a3")
+	if err != nil || len(got) != 1 || got[0].ID != "b4a3e097-big" || Folder(got[0]) != "-a" {
+		t.Fatalf("find: %+v %v", got, err)
+	}
+	if got, _ := Find(dir, "zz"); len(got) != 0 {
+		t.Errorf("an unknown prefix found %+v", got)
+	}
+	if p := Projects(dir); len(p) != 2 || p[0] != "-a" {
+		t.Errorf("projects %v: want -a (newest) then -b", p)
+	}
+}
