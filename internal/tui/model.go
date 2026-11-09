@@ -746,6 +746,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// All other keys go to the textarea. Reset history navigation on
 		// any edit so the draft is not accidentally discarded.
 		m.history.Reset()
+		// An emoji of unsteady width, pasted or from the desktop's picker, goes in as its
+		// shortcode (#47): drawn in the input, it garbles the screen. The meaning is the same.
+		if msg.Type == tea.KeyRunes {
+			msg.Runes = []rune(steadyText(string(msg.Runes)))
+		}
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		// A typed ":" may close an emoji shortcode (#33). A paste is the operator's exact text.
@@ -2110,9 +2115,10 @@ const nbHyphen = "\u2011"
 // wrapAtSpaces wraps s at width, ANSI-aware, breaking lines at spaces only. lipgloss's wrap also
 // breaks after any hyphen - fine for prose, but command output is full of names: a tag list wrapped
 // to "law-of-least-" and "effort" (2026-10-24). Hyphens go in as non-breaking ones and come back
-// out; a word wider than the screen is still cut.
+// out; a word wider than the screen is still cut. An emoji of unsteady width is drawn as its
+// shortcode (#47).
 func wrapAtSpaces(s string, width int) string {
-	s = strings.ReplaceAll(s, "-", nbHyphen)
+	s = strings.ReplaceAll(steadyText(s), "-", nbHyphen)
 	s = lipgloss.NewStyle().Width(width).Render(s)
 	return strings.ReplaceAll(s, nbHyphen, "-")
 }
