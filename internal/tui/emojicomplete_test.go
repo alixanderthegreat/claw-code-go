@@ -125,7 +125,7 @@ func TestEmojiRowWidth(t *testing.T) {
 		}
 	}
 	for _, e := range []string{"👋🏻", "🏴\U000E0067\U000E0062\U000E0077\U000E006C\U000E0073\U000E007F", "🇺🇸", "1️⃣", "👨‍🦯", "⁉️"} {
-		if steadyWidth(e) {
+		if steadyWidth(e) || !unsteadyEmoji(e) {
 			t.Errorf("%q counted steady", e)
 		}
 	}
@@ -138,8 +138,9 @@ func TestEmojiRowWidth(t *testing.T) {
 	if !strings.Contains(joined, "🤖") || strings.Contains(joined, "⁉") || strings.Contains(joined, "\u200d") {
 		t.Errorf(":rob -> %q: want 🤖, and no ⁉️ or joined sequence", joined)
 	}
-	if e, n := shortcodeAt([]rune(":interrobang:")); n == 0 || e == "" {
-		t.Error("an emoji left out of the row no longer resolves by its exact shortcode")
+	// Left out of the row, and since #47 not resolved either: it stays as its shortcode.
+	if e, n := shortcodeAt([]rune(":interrobang:")); n != 0 {
+		t.Errorf(":interrobang: resolved to %q; an unsteady emoji stays as typed", e)
 	}
 	for _, w := range []int{40, 80, 120} {
 		m := typeText(shortcodeModel(), ":s")

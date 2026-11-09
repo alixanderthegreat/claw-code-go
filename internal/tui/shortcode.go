@@ -46,7 +46,9 @@ func shortcodeAt(before []rune) (string, int) {
 	if !ok {
 		e, ok = shortcodes()[code]
 	}
-	if !ok {
+	// An emoji of unsteady width stays as its shortcode (#47): drawn in the input, it would
+	// garble the screen.
+	if !ok || unsteadyEmoji(e) {
 		return "", 0
 	}
 	return e, n - open

@@ -106,8 +106,8 @@ func emojiMatches(q string, n int) []emojiMatch {
 // letters, or 🏴 and tag characters), keycaps - is drawn as its parts by many terminals, while
 // every width measure calls it two. A text symbol asking for emoji form (⁉️) is one column to
 // some measures, so the width must also be two by both. A wider or narrower glyph shifts the row,
-// and if it wraps, the frame is a line taller than the screen. Those still resolve by their exact
-// shortcode; they're just not offered in the row.
+// and if it wraps, the frame is a line taller than the screen. Since #47 they aren't resolved
+// from their shortcode either, and the screen draws them as their shortcodes (steady.go).
 func steadyWidth(e string) bool {
 	if r := []rune(strings.TrimSuffix(e, "\ufe0f")); len(r) != 1 {
 		return false
