@@ -56,7 +56,7 @@ func renderHistory(messages []api.Message, md *mdStore) string {
 				}
 			}
 			if len(texts) > 0 {
-				sb.WriteString(userLabelStyle.Render("You") + ": " + strings.Join(texts, "\n") + "\n\n")
+				sb.WriteString(userText(strings.Join(texts, "\n"), md))
 			}
 			for _, line := range toolLines {
 				sb.WriteString(line + "\n")
