@@ -94,20 +94,25 @@ func suggestionAllowed(s string) bool {
 	return s != "" && (!looksOutward(s) || !outwardHeld())
 }
 
-// outwardHeld says whether the log holds outward suggestions back. It reads the log once a process:
-// the rates move slowly, and a turn shouldn't read a file. When it holds, it says so once, as a line
-// in the log itself (the screen is the TUI's), which the reader skips as a note, not a suggestion.
+// outwardHeld says whether the log holds outward suggestions back. It reads the log on every call,
+// so the gate follows the log as it grows: it's called once a turn, for an outward suggestion, off
+// the hot path, and the log is a few KB. Read once a process, it missed the threshold crossed
+// mid-process and kept offering. The first time it holds, it says so once, as a line in the log
+// itself (the screen is the TUI's), which the reader skips as a note, not a suggestion.
 var outwardHeld = outwardGate(suggestionsLog)
 
 func outwardGate(path func() string) func() bool {
-	return sync.OnceValue(func() bool {
+	var noted sync.Once
+	return func() bool {
 		p := path()
 		held, why := suggestions.HeldAt(p)
 		if held {
-			appendLog(p, map[string]any{"time": time.Now().Format(time.RFC3339), "event": why})
+			noted.Do(func() {
+				appendLog(p, map[string]any{"time": time.Now().Format(time.RFC3339), "event": why})
+			})
 		}
 		return held
-	})
+	}
 }
 
 // outwardWords mark a suggestion that approves something leaving this machine, for the trial's
