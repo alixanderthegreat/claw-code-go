@@ -72,9 +72,20 @@ var Signs = []Sign{
 	{"💤", ":idle:", "idle, nothing in the queue"},
 }
 
+// Decisions are the operator's decision signs: each answers an ask with one fixed meaning (the
+// operator, 2026-11-10: 🚀 merge it, 🏁 deploy it). port signs counts them as decisions.
+var Decisions = []Sign{
+	{"🤝", ":ahead:", "go ahead: do what was asked"},
+	{"🍏", ":go:", "go: start the work"},
+	{"🍎", ":hold:", "hold: don't"},
+	{"🚀", ":merge:", "merge it"},
+	{"🏁", ":deploy:", "deploy it"},
+	{"🚦", ":status:", "status?"},
+}
+
 // SignCode is the emoji for a sign's shortcode, if it is one.
 func SignCode(code string) (string, bool) {
-	for _, s := range Signs {
+	for _, s := range append(append([]Sign{}, Signs...), Decisions...) {
 		if s.Code == code {
 			return s.Emoji, true
 		}

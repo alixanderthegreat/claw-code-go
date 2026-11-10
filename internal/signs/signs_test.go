@@ -83,3 +83,24 @@ func TestSignCode(t *testing.T) {
 		t.Error(":fire: isn't a sign")
 	}
 }
+
+// The decision signs are single code points (the format rule), distinct from the twelve, and
+// their shortcodes resolve.
+func TestDecisions(t *testing.T) {
+	seen := map[string]bool{}
+	for _, s := range Signs {
+		seen[s.Emoji], seen[s.Code] = true, true
+	}
+	for _, d := range Decisions {
+		if n := len([]rune(d.Emoji)); n != 1 {
+			t.Errorf("%s is %d code points", d.Emoji, n)
+		}
+		if seen[d.Emoji] || seen[d.Code] {
+			t.Errorf("%s %s repeats a sign", d.Emoji, d.Code)
+		}
+		seen[d.Emoji], seen[d.Code] = true, true
+		if e, ok := SignCode(d.Code); !ok || e != d.Emoji {
+			t.Errorf("%s doesn't resolve", d.Code)
+		}
+	}
+}
