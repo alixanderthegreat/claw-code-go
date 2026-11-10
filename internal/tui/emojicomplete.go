@@ -81,7 +81,7 @@ func emojiMatches(q string, n int) []emojiMatch {
 		}
 		return len(out) >= n
 	}
-	for _, s := range signs.Signs {
+	for _, s := range append(append([]signs.Sign{}, signs.Signs...), signs.Decisions...) {
 		if strings.HasPrefix(s.Code[1:], q) && add(s.Emoji, s.Code) {
 			return out
 		}
