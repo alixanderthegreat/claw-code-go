@@ -90,3 +90,44 @@ func TestHandoffCheck(t *testing.T) {
 		t.Errorf("one here: %+v", c)
 	}
 }
+
+// doctor suggestions prints the counts and rates, split by outward, and the gate's state.
+func TestSuggestionsReport(t *testing.T) {
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	at := now.Format(time.RFC3339)
+	var lines []string
+	add := func(n int, outcome string, outward bool) {
+		for i := 0; i < n; i++ {
+			lines = append(lines, `{"time":"`+at+`","suggested":"s","sent":"s","outcome":"`+outcome+`","outward":`+map[bool]string{true: "true", false: "false"}[outward]+`}`)
+		}
+	}
+	add(1, "accepted", false)
+	add(3, "edited", false)
+	add(25, "ignored", false)
+	add(6, "ignored", true)
+	lines = append(lines, "{broken")
+	p := filepath.Join(t.TempDir(), "suggestions.jsonl")
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := suggestionsReport(&out, p, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"suggestions: 35 total (last 30 days: 35), 1 malformed lines skipped",
+		"all:      accepted 1 (2.9%)    edited 3 (8.6%)      ignored 31 (88.6%)",
+		"outward:  accepted 0 (0.0%)    edited 0 (0.0%)      ignored 6 (100.0%)",
+		"inward:   accepted 1 (3.4%)    edited 3 (10.3%)     ignored 25 (86.2%)",
+		"outward suggestions offered: 6 of 10 entries needed to decide",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report lacks %q:\n%s", want, out.String())
+		}
+	}
+
+	out.Reset()
+	if err := suggestionsReport(&out, filepath.Join(t.TempDir(), "none.jsonl"), now); err != nil || out.String() != "no suggestions logged yet\n" {
+		t.Errorf("no log: %q, %v", out.String(), err)
+	}
+}
