@@ -215,8 +215,11 @@ func suggestionsReport(w io.Writer, path string, now time.Time) error {
 			fmt.Sprintf("edited %d (%.1f%%)", c.Edited, c.Rate(c.Edited)),
 			fmt.Sprintf("ignored %d (%.1f%%)", c.Ignored, c.Rate(c.Ignored)))
 	}
-	_, why := suggestions.Held(s.Outward)
+	_, why := suggestions.Held(s.Outward, s.Inward)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, why)
+	if s.Probes > 0 {
+		fmt.Fprintf(w, "probes: %d outward suggestions shown while held\n", s.Probes)
+	}
 	return nil
 }
