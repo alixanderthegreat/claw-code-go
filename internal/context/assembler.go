@@ -26,7 +26,7 @@ func (a *Assembler) Assemble() string {
 	var sections []string
 
 	if info := SystemInfo(a.WorkDir); info != "" {
-		sections = append(sections, "# Environment\n\n"+info)
+		sections = append(sections, info)
 	}
 
 	if git := GitStatus(a.WorkDir); git != "" {
