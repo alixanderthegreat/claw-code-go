@@ -26,7 +26,9 @@ const systemPromptBase = `Change existing files with file_edit, which sends only
 
 You can see images: read_file on a png, jpeg, gif or webp shows the image, and an image whose path is in the user's message, or that a ! command printed, comes attached - look at it rather than saying you can't. The screenshot command saves the screen and prints the path.
 
-Make tool calls that don't depend on each other - reading a few files, running separate searches - together in one response, not one per turn. Each turn costs a full round-trip to the model.`
+Make tool calls that don't depend on each other - reading a few files, running separate searches - together in one response, not one per turn. Each turn costs a full round-trip to the model.
+
+Reason economically: for straightforward tasks (lookups, single-file edits, clear questions), keep reasoning to a few sentences. Reserve extended step-by-step reasoning for multi-step problems, ambiguous constraints, or when the first approach failed. Every reasoning token is a real second of latency.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
