@@ -33,7 +33,7 @@ func TestDefaultModeAsks(t *testing.T) {
 func TestDenyRuleBeatsRememberedAllow(t *testing.T) {
 	rules := &Ruleset{Rules: []Rule{{Tool: "bash", Pattern: "git push", Decision: DecisionDeny}}}
 	m := NewManager(ModeDefault, rules)
-	m.Remember("bash", "", DecisionAllow, ScopeAlways)
+	m.Remember("bash", "go test ./...", DecisionAllow, ScopeAlways)
 	if d := m.Check("bash", "git commit -m x && git push origin main"); d != DecisionDeny {
 		t.Errorf("git push after an always-allow: %v, want deny", d)
 	}
@@ -71,7 +71,7 @@ func TestCheckRuleNamesTheDenyRule(t *testing.T) {
 	rules := &Ruleset{Rules: []Rule{{Tool: "bash", Pattern: "git push", Decision: DecisionDeny}}}
 	for _, mode := range []PermissionMode{ModeDefault, ModeBypassPermissions, ModeAcceptEdits} {
 		m := NewManager(mode, rules)
-		m.Remember("bash", "", DecisionAllow, ScopeAlways)
+		m.Remember("bash", "go test ./...", DecisionAllow, ScopeAlways)
 		d, r := m.CheckRule("bash", "git push origin main")
 		if d != DecisionDeny || r == nil || r.Pattern != "git push" {
 			t.Errorf("%s: got %v, %+v; want deny by the git push rule", mode, d, r)

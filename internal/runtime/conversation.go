@@ -653,7 +653,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						loop.emitTool(tb.name, 0, false, false, true, "you_stop")
 						return "user_stopped", inputTokens, outputTokens, cachedTokens, nil
 					case PermDecisionAllowAlways:
-						loop.PermManager.Remember(tb.name, summary, permissions.DecisionAllow, permissions.ScopeAlways)
+						loop.PermManager.Remember(tb.name, RuleInput(inputMap), permissions.DecisionAllow, permissions.ScopeAlways)
 					}
 					// PermDecisionAllowOnce falls through to execution
 				}

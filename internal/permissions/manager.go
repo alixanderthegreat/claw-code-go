@@ -8,7 +8,7 @@ type Manager struct {
 	Rules *Ruleset
 
 	mu    sync.Mutex
-	cache map[string]Decision // keyed by tool name for ScopeAlways grants
+	cache map[string]Decision // ScopeAlways grants, keyed by tool and kind of command (grantKey)
 }
 
 // NewManager creates a Manager with the given mode and ruleset.
@@ -40,7 +40,7 @@ func (m *Manager) Check(tool, input string) Decision {
 //     tool - the exact shape unattended dispatch needs, e.g. deny web_fetch/
 //     web_search while still allowing bash/read/write/edit with no prompting)
 //   - Plan             → always Deny
-//   - Otherwise        → a deny rule, then the session cache, then the ruleset, then Ask
+//   - Otherwise        → a deny rule, an ask rule, then the session cache, then the ruleset, then Ask
 func (m *Manager) CheckRule(tool, input string) (Decision, *Rule) {
 	rule := m.Rules.MatchRule(tool, input)
 	denied := rule != nil && rule.Decision == DecisionDeny
@@ -61,12 +61,14 @@ func (m *Manager) CheckRule(tool, input string) (Decision, *Rule) {
 		return DecisionDeny, rule
 	}
 
-	m.mu.Lock()
-	if d, ok := m.cache[tool]; ok {
-		m.mu.Unlock()
+	// An ask rule asks every time: a remembered "always" doesn't carry over to it (#3, point 3).
+	if rule != nil && rule.Decision == DecisionAsk {
+		return DecisionAsk, rule
+	}
+
+	if d, ok := m.remembered(tool, input); ok {
 		return d, nil
 	}
-	m.mu.Unlock()
 
 	if rule != nil {
 		return rule.Decision, rule
@@ -84,13 +86,41 @@ func (m *Manager) CheckRule(tool, input string) (Decision, *Rule) {
 	return DecisionAsk, nil
 }
 
-// Remember stores a user decision in the session cache for ScopeAlways grants.
-// ScopeOnce decisions are not cached.
-func (m *Manager) Remember(tool, _ string, decision Decision, scope Scope) {
+// Remember stores a user decision in the session cache for ScopeAlways grants: for the kinds of
+// command in input (Kinds), not the whole tool (#28). ScopeOnce decisions, and a call whose kinds
+// can't be told, are not cached.
+func (m *Manager) Remember(tool, input string, decision Decision, scope Scope) {
 	if scope != ScopeAlways {
 		return
 	}
+	kinds, _ := Kinds(tool, input)
 	m.mu.Lock()
-	m.cache[tool] = decision
+	for _, k := range kinds {
+		m.cache[grantKey(tool, k)] = decision
+	}
 	m.mu.Unlock()
 }
+
+// remembered is the cached decision for a call: found only when every kind in it was remembered,
+// and a deny for any of them wins.
+func (m *Manager) remembered(tool, input string) (Decision, bool) {
+	kinds, _ := Kinds(tool, input)
+	if kinds == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := DecisionAllow
+	for _, k := range kinds {
+		c, ok := m.cache[grantKey(tool, k)]
+		if !ok {
+			return 0, false
+		}
+		if c == DecisionDeny {
+			d = DecisionDeny
+		}
+	}
+	return d, true
+}
+
+func grantKey(tool, kind string) string { return tool + "\x00" + kind }
