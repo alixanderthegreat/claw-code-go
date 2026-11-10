@@ -63,9 +63,9 @@ var mdLead = regexp.MustCompile(`^( *)((?:•|\d+\.|│) )?`)
 
 // hangWrap wraps each line of Glamour's unwrapped output to width once, keeping its styles, with
 // the continuation lines hung under the line's text: below a bullet's or a number's words, and a
-// quote's bar repeated.
+// quote's bar repeated. A table too wide is laid out again to fit (#51).
 func hangWrap(s string, width int) string {
-	lines := strings.Split(s, "\n")
+	lines := fitTables(strings.Split(s, "\n"), width)
 	var b strings.Builder
 	for i, line := range lines {
 		if i > 0 {
