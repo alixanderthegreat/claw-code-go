@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +35,10 @@ type Client struct {
 	// default, which is Mary's (F5) - so Gordi sets its own.
 	Voice string
 	HTTP  *http.Client
+
+	// wavOnly is set once speech is asked for WAV only: the player can't play Opus, or the
+	// service refused it.
+	wavOnly atomic.Bool
 }
 
 // NewClient returns a Client for baseURL. sttModel may be empty for DefaultSTTModel.
@@ -125,9 +131,30 @@ func dropMarkers(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// Synthesize returns text spoken as a WAV.
+// Synthesize returns text spoken as Ogg Opus, a twentieth of the WAV's bytes, so a chunk arrives
+// faster than it plays over a slow link; or as a WAV when Opus can't be had. The bytes say which.
 func (c *Client) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	body := map[string]string{"model": "supertonic", "input": text, "response_format": "wav"}
+	if !c.wavOnly.Load() {
+		audio, err := c.synthesize(ctx, text, "opus")
+		var refused *formatRefused
+		if !errors.As(err, &refused) {
+			return audio, err
+		}
+		c.wavOnly.Store(true) // a service that only speaks WAV: ask for it from now on
+	}
+	return c.synthesize(ctx, text, "wav")
+}
+
+// WAVOnly makes Synthesize ask for WAV, for a player that can't play Opus.
+func (c *Client) WAVOnly() { c.wavOnly.Store(true) }
+
+// formatRefused is a speech service's 400 for a response_format it doesn't make.
+type formatRefused struct{ err error }
+
+func (e *formatRefused) Error() string { return e.err.Error() }
+
+func (c *Client) synthesize(ctx context.Context, text, format string) ([]byte, error) {
+	body := map[string]string{"model": "supertonic", "input": text, "response_format": format}
 	if c.Voice != "" {
 		body["voice"] = c.Voice
 	}
@@ -137,9 +164,13 @@ func (c *Client) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	wav, err := c.do(req)
+	audio, err := c.do(req)
 	if err != nil {
-		return nil, fmt.Errorf("speak: %w", err)
+		err = fmt.Errorf("speak: %w", err)
+		if format != "wav" && strings.Contains(err.Error(), ": 400 ") && strings.Contains(err.Error(), "response_format") {
+			return nil, &formatRefused{err}
+		}
+		return nil, err
 	}
-	return wav, nil
+	return audio, nil
 }

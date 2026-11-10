@@ -140,3 +140,58 @@ func TestSynthesizeSendsTheVoice(t *testing.T) {
 		t.Errorf("no voice configured, but the request named %q", v)
 	}
 }
+
+// TestSynthesizeAsksForOpus: speech is asked for as Opus; a service that refuses it (the old one
+// said `only response_format "wav" is supported`) gets WAV from then on, and so does a client told
+// its player plays only WAV.
+func TestSynthesizeAsksForOpus(t *testing.T) {
+	var asked []string
+	opus := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = append(asked, body["response_format"])
+		if body["response_format"] == "opus" {
+			if !opus {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":{"message":"only response_format \"wav\" is supported"}}`))
+				return
+			}
+			w.Write([]byte("OggS-opus"))
+			return
+		}
+		w.Write([]byte("RIFF-wav"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "", "")
+	if a, err := c.Synthesize(context.Background(), "hi"); err != nil || string(a) != "OggS-opus" {
+		t.Fatalf("Synthesize = %q, %v; want the Opus", a, err)
+	}
+	opus = false
+	old := NewClient(srv.URL, "", "")
+	for range 2 {
+		if a, err := old.Synthesize(context.Background(), "hi"); err != nil || string(a) != "RIFF-wav" {
+			t.Fatalf("from a WAV-only service: %q, %v", a, err)
+		}
+	}
+	w := NewClient(srv.URL, "", "")
+	w.WAVOnly()
+	w.Synthesize(context.Background(), "hi")
+	if got := strings.Join(asked, ","); got != "opus,opus,wav,wav,wav" {
+		t.Errorf("asked for %s, want opus,opus,wav,wav,wav", got)
+	}
+}
+
+func TestWriteTempNamesTheFormat(t *testing.T) {
+	for audio, ext := range map[string]string{"OggS...": ".ogg", "RIFF...": ".wav"} {
+		p, err := writeTemp([]byte(audio))
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(p)
+		if !strings.HasSuffix(p, ext) {
+			t.Errorf("%q kept as %s, want %s", audio, p, ext)
+		}
+	}
+}

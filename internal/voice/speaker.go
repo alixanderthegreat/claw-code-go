@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -46,6 +47,9 @@ func (s *Speaker) Say(text string) error {
 	player, err := findPlayer()
 	if err != nil {
 		return err
+	}
+	if player.bin == "aplay" { // plays WAV only
+		s.client.WAVOnly()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -152,13 +156,18 @@ func findPlayer() (foundPlayer, error) {
 	return foundPlayer{}, errors.New("no audio player found: install pw-play (PipeWire), aplay (alsa-utils) or mpv")
 }
 
-func writeTemp(wav []byte) (string, error) {
-	f, err := os.CreateTemp("", "claw-speech-*.wav")
+// writeTemp keeps audio in a file the player can open, named for what it is: Ogg Opus or WAV.
+func writeTemp(audio []byte) (string, error) {
+	ext := ".wav"
+	if bytes.HasPrefix(audio, []byte("OggS")) {
+		ext = ".ogg"
+	}
+	f, err := os.CreateTemp("", "claw-speech-*"+ext)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := f.Write(wav); err != nil {
+	if _, err := f.Write(audio); err != nil {
 		os.Remove(f.Name())
 		return "", err
 	}
