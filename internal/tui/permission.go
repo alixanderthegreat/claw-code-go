@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"claw-code-go/internal/permissions"
+	"claw-code-go/internal/runtime"
 )
 
 // permission.go: the box that asks before a tool runs. It spans the screen and shows all of what's
@@ -121,7 +124,10 @@ func (m Model) viewPermission() string {
 		parts = append(parts, statusStyle.Render(fmt.Sprintf("lines %d-%d of %d · ↑/↓ PgUp/PgDn Home/End to scroll",
 			top+1, top+shown, len(lines))))
 	}
-	keys := "[y]es once  [a]lways  [n]o / Esc: stop the turn"
+	keys := "[y]es once  [a]" + strings.TrimPrefix(m.permCovers(), "a") + "  [n]o / Esc: stop the turn"
+	if !m.permAlwaysOffered() {
+		keys = "[y]es once  [n]o / Esc: stop the turn  (" + m.permCovers() + ")"
+	}
 	parts = append(parts, "", statusStyle.Render(keys))
 	return permBoxStyle.Width(max(m.width-2, 20)).Render(strings.Join(parts, "\n"))
 }
@@ -133,4 +139,16 @@ func (m Model) viewPermissionOverlay() string {
 	vp := m.viewport
 	vp.Height = max(m.height-lipgloss.Height(box), 1)
 	return lipgloss.JoinVertical(lipgloss.Left, vp.View(), box)
+}
+
+// permCovers says what "always" would allow for the rest of the session (#28): for bash the kinds
+// of command in this one, not every bash command.
+func (m Model) permCovers() string {
+	return permissions.Covers(m.permToolName, runtime.RuleInput(m.permArgs))
+}
+
+// permAlwaysOffered is whether this call can be remembered at all.
+func (m Model) permAlwaysOffered() bool {
+	kinds, _ := permissions.Kinds(m.permToolName, runtime.RuleInput(m.permArgs))
+	return kinds != nil
 }

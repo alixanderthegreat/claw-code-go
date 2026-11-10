@@ -1709,6 +1709,9 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y":
 		decision = runtime.PermDecisionAllowOnce
 	case "a", "A":
+		if !m.permAlwaysOffered() {
+			return m, nil // the box says always isn't offered for this call
+		}
 		decision = runtime.PermDecisionAllowAlways
 	case "n", "N", "esc":
 		// Deny and end the turn, so the input box is back right away instead
