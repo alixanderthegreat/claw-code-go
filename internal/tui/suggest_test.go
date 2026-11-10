@@ -137,7 +137,7 @@ func TestLogOutcomes(t *testing.T) {
 }
 
 // Every non-empty suggestion is offered while the log holds too few outward ones to decide; once
-// it holds outward ones back (#50), inward ones are still offered. The gate reads the log once.
+// it holds outward ones back (#50), inward ones are still offered. The gate notes itself once.
 func TestSuggestionAllowed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
@@ -154,7 +154,6 @@ func TestSuggestionAllowed(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		logSuggestion("push it", "no", false)
 	}
-	outwardHeld = outwardGate(suggestionsLog)
 	if suggestionAllowed("merge it") || suggestionAllowed("push it to core") {
 		t.Error("an outward suggestion offered after 10 ignored")
 	}
@@ -163,6 +162,30 @@ func TestSuggestionAllowed(t *testing.T) {
 	}
 	b, _ := os.ReadFile(suggestionsLog())
 	if n := strings.Count(string(b), "outward suggestions held: accept rate 0.0% over 10 entries"); n != 1 {
+		t.Errorf("the gate noted itself %d times, want once: %s", n, b)
+	}
+}
+
+// The gate follows the log within one process: 9 outward entries offer, the 10th crosses the
+// threshold and the same gate holds from then on, noting it once.
+func TestSuggestionGateCrossedMidProcess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
+	outwardHeld = outwardGate(suggestionsLog)
+	for i := 0; i < 9; i++ {
+		logSuggestion("push it", "no", false)
+	}
+	if !suggestionAllowed("push it") {
+		t.Fatal("held at 9 outward entries")
+	}
+	logSuggestion("push it", "no", false)
+	for i := 0; i < 3; i++ {
+		if suggestionAllowed("push it") {
+			t.Fatal("offered after the 10th outward entry was logged")
+		}
+	}
+	b, _ := os.ReadFile(suggestionsLog())
+	if n := strings.Count(string(b), `"event"`); n != 1 {
 		t.Errorf("the gate noted itself %d times, want once: %s", n, b)
 	}
 }
