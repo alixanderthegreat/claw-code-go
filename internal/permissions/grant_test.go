@@ -67,3 +67,23 @@ func TestAskRuleBeatsRememberedAllow(t *testing.T) {
 		t.Errorf("deploy after always: %v, want ask", got)
 	}
 }
+
+// Bypass mode with an ask rule (#3): the matching call asks, everything else runs, and a deny
+// rule matching the same call still wins.
+func TestAskRulesHoldInBypass(t *testing.T) {
+	rules := &Ruleset{Rules: []Rule{
+		{Tool: "bash", Pattern: "deploy", Decision: DecisionAsk},
+		{Tool: "bash", Pattern: "rm -rf", Decision: DecisionDeny},
+		{Tool: "bash", Pattern: "rm -rf", Decision: DecisionAsk},
+	}}
+	m := NewManager(ModeBypassPermissions, rules)
+	if d, r := m.CheckRule("bash", "./deploy.sh"); d != DecisionAsk || r == nil || r.Pattern != "deploy" {
+		t.Errorf("deploy in bypass: %v, %+v; want ask by the deploy rule", d, r)
+	}
+	if d := m.Check("bash", "go test ./..."); d != DecisionAllow {
+		t.Errorf("go test in bypass: %v, want allow", d)
+	}
+	if d := m.Check("bash", "rm -rf build"); d != DecisionDeny {
+		t.Errorf("deny and ask both match: %v, want deny", d)
+	}
+}
