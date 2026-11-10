@@ -136,16 +136,34 @@ func TestLogOutcomes(t *testing.T) {
 	}
 }
 
-// The trial (2026-11-09): every non-empty suggestion is offered, outward ones included; the log
-// marks the outward ones.
+// Every non-empty suggestion is offered while the log holds too few outward ones to decide; once
+// it holds outward ones back (#50), inward ones are still offered. The gate reads the log once.
 func TestSuggestionAllowed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
+	outwardHeld = outwardGate(suggestionsLog)
 	if suggestionAllowed("") {
 		t.Error("an empty suggestion is offered")
 	}
 	for _, s := range []string{"run the tests again", "merge it", "push it to core"} {
 		if !suggestionAllowed(s) {
-			t.Errorf("%q held back during the trial", s)
+			t.Errorf("%q held back with no log", s)
 		}
+	}
+
+	for i := 0; i < 10; i++ {
+		logSuggestion("push it", "no", false)
+	}
+	outwardHeld = outwardGate(suggestionsLog)
+	if suggestionAllowed("merge it") || suggestionAllowed("push it to core") {
+		t.Error("an outward suggestion offered after 10 ignored")
+	}
+	if !suggestionAllowed("run the tests again") {
+		t.Error("the gate held an inward suggestion")
+	}
+	b, _ := os.ReadFile(suggestionsLog())
+	if n := strings.Count(string(b), "outward suggestions held: accept rate 0.0% over 10 entries"); n != 1 {
+		t.Errorf("the gate noted itself %d times, want once: %s", n, b)
 	}
 }
 

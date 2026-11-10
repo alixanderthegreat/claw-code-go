@@ -15,6 +15,7 @@ import (
 	ctxpkg "claw-code-go/internal/context"
 	"claw-code-go/internal/handoff"
 	"claw-code-go/internal/runtime"
+	"claw-code-go/internal/suggestions"
 	"claw-code-go/internal/voice"
 )
 
@@ -28,8 +29,15 @@ type check struct {
 }
 
 func runDoctor(args []string) {
+	if len(args) == 1 && args[0] == "suggestions" {
+		if err := suggestionsReport(os.Stdout, suggestions.Path(), time.Now()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) > 0 {
-		fmt.Fprintln(os.Stderr, "usage: claw-code-go doctor")
+		fmt.Fprintln(os.Stderr, "usage: claw-code-go doctor [suggestions]")
 		os.Exit(2)
 	}
 	checks := doctor()
@@ -177,4 +185,38 @@ func toolsCheck(tools []ctxpkg.Tool) check {
 		return check{"tools", "warn", fmt.Sprintf("%d of %d on PATH; not here: %s", len(tools)-len(missing), len(tools), strings.Join(missing, ", "))}
 	}
 	return check{"tools", "ok", fmt.Sprintf("all %d on PATH", len(tools))}
+}
+
+// suggestionsReport is `doctor suggestions` (#50): how the next-prompt suggestions fared, from their
+// log - accepted, edited or ignored, all of them and split by whether they looked outward - and
+// whether the outward gate holds them now. No log yet is not an error.
+func suggestionsReport(w io.Writer, path string, now time.Time) error {
+	s, err := suggestions.Read(path, now)
+	if errors.Is(err, os.ErrNotExist) || err == nil && s.All.Total() == 0 && s.Skipped == 0 {
+		fmt.Fprintln(w, "no suggestions logged yet")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "suggestions: %d total (last 30 days: %d)", s.All.Total(), s.Recent)
+	if s.Skipped > 0 {
+		fmt.Fprintf(w, ", %d malformed lines skipped", s.Skipped)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w)
+	for _, row := range []struct {
+		name string
+		c    suggestions.Counts
+	}{{"all:", s.All}, {"outward:", s.Outward}, {"inward:", s.Inward}} {
+		c := row.c
+		fmt.Fprintf(w, "%-9s %-20s %-20s %s\n", row.name,
+			fmt.Sprintf("accepted %d (%.1f%%)", c.Accepted, c.Rate(c.Accepted)),
+			fmt.Sprintf("edited %d (%.1f%%)", c.Edited, c.Rate(c.Edited)),
+			fmt.Sprintf("ignored %d (%.1f%%)", c.Ignored, c.Rate(c.Ignored)))
+	}
+	_, why := suggestions.Held(s.Outward)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, why)
+	return nil
 }

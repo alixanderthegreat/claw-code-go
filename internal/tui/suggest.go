@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"claw-code-go/internal/api"
+	"claw-code-go/internal/suggestions"
 )
 
 // Next-prompt suggestions (#32): after each reply, the operator's likely next message shows as
@@ -79,15 +81,33 @@ func (m Model) endSuggestion(sent string) Model {
 	return m
 }
 
-// suggestionAllowed says whether a suggestion may be offered at all: any that isn't empty.
+// suggestionAllowed says whether a suggestion may be offered: any that isn't empty, unless it looks
+// outward and the outward gate holds those.
 //
-// A trial, the operator's call (2026-11-09): #32 proposed holding back an approval of an outward
-// action (a push, a deploy, a merge, a message sent), so that one key can't approve it. For now
-// there's no such check; instead each logged suggestion says whether it looked outward, so the
-// trial's log shows how often one was offered and taken before the check is decided. Permissions
-// and the fences are unchanged either way: a suggestion is only text in the box.
+// The trial, the operator's call (2026-11-09): #32 proposed holding back an approval of an outward
+// action (a push, a deploy, a merge, a message sent), so that one key can't approve it. Each logged
+// suggestion says whether it looked outward, and the log settles it (#50): once there are enough
+// outward ones and too few were accepted, they're held (suggestions.Held). Inward suggestions are
+// always offered. Permissions and the fences are unchanged either way: a suggestion is only text in
+// the box.
 func suggestionAllowed(s string) bool {
-	return s != ""
+	return s != "" && (!looksOutward(s) || !outwardHeld())
+}
+
+// outwardHeld says whether the log holds outward suggestions back. It reads the log once a process:
+// the rates move slowly, and a turn shouldn't read a file. When it holds, it says so once, as a line
+// in the log itself (the screen is the TUI's), which the reader skips as a note, not a suggestion.
+var outwardHeld = outwardGate(suggestionsLog)
+
+func outwardGate(path func() string) func() bool {
+	return sync.OnceValue(func() bool {
+		p := path()
+		held, why := suggestions.HeldAt(p)
+		if held {
+			appendLog(p, map[string]any{"time": time.Now().Format(time.RFC3339), "event": why})
+		}
+		return held
+	})
 }
 
 // outwardWords mark a suggestion that approves something leaving this machine, for the trial's
@@ -110,10 +130,7 @@ func looksOutward(s string) bool {
 }
 
 // suggestionsLog is where each suggestion and its outcome go, on this machine only.
-func suggestionsLog() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local/share/claw-code-go/suggestions.jsonl")
-}
+func suggestionsLog() string { return suggestions.Path() }
 
 // logSuggestion appends one outcome: accepted (sent as suggested), edited (taken, then changed),
 // or ignored (the operator typed their own).
@@ -125,7 +142,14 @@ func logSuggestion(suggested, sent string, taken bool) {
 	case taken:
 		outcome = "edited"
 	}
-	p := suggestionsLog()
+	appendLog(suggestionsLog(), map[string]any{
+		"time": time.Now().Format(time.RFC3339), "suggested": suggested, "sent": sent, "outcome": outcome,
+		"outward": looksOutward(suggested),
+	})
+}
+
+// appendLog adds one JSON line to the log at p, private to the operator.
+func appendLog(p string, rec map[string]any) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return
 	}
@@ -134,9 +158,6 @@ func logSuggestion(suggested, sent string, taken bool) {
 		return
 	}
 	defer f.Close()
-	line, _ := json.Marshal(map[string]any{
-		"time": time.Now().Format(time.RFC3339), "suggested": suggested, "sent": sent, "outcome": outcome,
-		"outward": looksOutward(suggested),
-	})
+	line, _ := json.Marshal(rec)
 	f.Write(append(line, '\n')) //nolint:errcheck
 }
