@@ -632,7 +632,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 						denied := api.ContentBlock{
 							Type:      "tool_result",
 							ToolUseID: tb.id,
-							Content:   []api.ContentBlock{{Type: "text", Text: refusalText(refusedUnattended, tb.name, nil)}},
+							Content:   []api.ContentBlock{{Type: "text", Text: refusalText(refusedUnattended, tb.name, rule)}},
 							IsError:   true,
 						}
 						toolResults = append(toolResults, denied)

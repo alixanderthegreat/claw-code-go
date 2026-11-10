@@ -34,7 +34,7 @@ func (m *Manager) Check(tool, input string) Decision {
 // CheckRule returns the Decision for the given tool and input summary, and the rule that decided
 // it (nil when no rule did: a mode, a remembered answer, or nothing matched).
 //
-//   - BypassPermissions → Allow, UNLESS the ruleset explicitly denies this tool
+//   - BypassPermissions → Allow, UNLESS a rule denies or asks for this call (ask: #3)
 //     (kata 84 Test 2: bypass used to short-circuit before ever consulting the
 //     ruleset, so there was no way to auto-allow everything except a specific
 //     tool - the exact shape unattended dispatch needs, e.g. deny web_fetch/
@@ -47,8 +47,10 @@ func (m *Manager) CheckRule(tool, input string) (Decision, *Rule) {
 
 	switch m.Mode {
 	case ModeBypassPermissions:
-		if denied {
-			return DecisionDeny, rule
+		// Deny and ask rules hold in bypass (#3): "work freely, but stop before anything
+		// leaves the machine" is an ask rule on the outward commands.
+		if rule != nil && (rule.Decision == DecisionDeny || rule.Decision == DecisionAsk) {
+			return rule.Decision, rule
 		}
 		return DecisionAllow, nil
 	case ModePlan:

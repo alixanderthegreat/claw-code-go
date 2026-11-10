@@ -65,7 +65,19 @@ Native OAuth flow for Anthropic accounts. Credentials are stored securely and re
 Full MCP integration: connect external tool servers over stdio or SSE, register their tools, and let Claude call them seamlessly alongside built-in tools.
 
 ### 🔒 Permissions & Safety
-Fine-grained permission system controls what Claude can do — bash execution, file writes, network access — with configurable modes (`default`, `accept-edits`, `bypass`, `plan`) and rule-based overrides. `bypass` mode still honors an explicit deny rule rather than truly allowing everything unconditionally — see [Server Mode](#server-mode-dispatch-surface) for why that matters.
+Fine-grained permission system controls what Claude can do — bash execution, file writes, network access — with configurable modes (`default`, `accept-edits`, `bypass`, `plan`) and rule-based overrides. `bypass` mode still honors an explicit deny or ask rule rather than truly allowing everything unconditionally — see [Server Mode](#server-mode-dispatch-surface) for why that matters.
+
+To let the agent work freely but stop before anything leaves the machine, add ask rules for the outward commands. An ask rule asks in every mode, bypass included. With no one to ask (`-prompt`, serve's dispatch), the call isn't run, and the model is told which rule wanted the operator. Which commands count as outward is each installation's own business: none ship in the code. An example, in `~/.config/claw-code-go/settings.json` or a project's `.claude/settings.json`:
+
+```json
+{"rules": [
+  {"tool": "bash", "pattern": "deploy", "decision": "ask"},
+  {"tool": "bash", "pattern": "git push", "decision": "ask"},
+  {"tool": "bash", "pattern": "pr merge", "decision": "ask"}
+]}
+```
+
+Patterns match substrings of the command. This guards against mistakes, not against someone hiding a command on purpose. An ask rule's "yes" is never remembered: each matching call asks again. Answering "always" to any other command covers that kind of command (`git status`, `go test`), not the whole tool.
 
 ### 📦 Context Assembly
 On every turn, claw-code-go automatically injects:
@@ -193,7 +205,7 @@ When `base_url` is set, claw-code-go switches to an OpenAI-shaped request format
 | `--model` | `claude-sonnet-4-20250514` | Override the model to use |
 | `--session` | — | Resume a saved session by ID |
 | `--session-dir` | `~/.claw-code/sessions` | Directory for session files |
-| `--permission-mode` | `default` | `default` (ask when needed), `accept-edits` (auto-allow read/edit tools, still ask for bash), `bypass` (allow everything, never ask - see [Server Mode](#server-mode-dispatch-surface)), `plan` (describe only, never execute) |
+| `--permission-mode` | `default` | `default` (ask when needed), `accept-edits` (auto-allow read/edit tools, still ask for bash), `bypass` (allow everything without asking, except ask and deny rules - see [Server Mode](#server-mode-dispatch-surface)), `plan` (describe only, never execute) |
 
 There's no `--login` or `--provider` flag - see [Login](#login) above. `--repl` is currently declared but not wired to anything (a no-op); the TUI is already the default whenever `--prompt` isn't set.
 
