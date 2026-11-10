@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -10,8 +11,9 @@ import (
 
 // suggestAsk is the instruction added after the conversation for a next-prompt suggestion (#32).
 const suggestAsk = "[Not from the operator: a side request from the interface.] " +
-	"Write the operator's most likely next message to you, as they would type it: one short line, " +
-	"their words, not yours - no quotes, no explanation. If you can't tell, write nothing. " +
+	"Write the operator's most likely next message to the assistant, as the operator would type it: " +
+	"one line of at most 20 words, in the operator's voice, not the assistant's - don't answer or " +
+	"carry on the assistant's reply. No quotes, no explanation. If you can't tell, write nothing. " +
 	"Don't call a tool."
 
 // thinkRE is a reasoning model's thinking, when a server leaves it in the text.
@@ -63,11 +65,31 @@ func (loop *ConversationLoop) SuggestNext(ctx context.Context, messages []api.Me
 	if err != nil {
 		return "", err
 	}
-	text, err := collectStreamText(ch)
-	if err != nil {
-		return "", err
+	text, cut, err := collectSuggestion(ch)
+	if err != nil || cut {
+		return "", err // a suggestion cut off by the token limit is never shown half-written (#60)
 	}
 	return cleanSuggestion(text), nil
+}
+
+// collectSuggestion is the reply's text, and whether the server stopped it at the token limit.
+func collectSuggestion(ch <-chan api.StreamEvent) (text string, cut bool, err error) {
+	var sb strings.Builder
+	for event := range ch {
+		switch event.Type {
+		case api.EventError:
+			err = errors.New(event.ErrorMessage)
+		case api.EventContentBlockDelta:
+			if event.Delta.Type == "text_delta" {
+				sb.WriteString(event.Delta.Text)
+			}
+		case api.EventMessageDelta:
+			if event.StopReason == "max_tokens" || event.Usage.FinishReason == "length" {
+				cut = true
+			}
+		}
+	}
+	return sb.String(), cut, err
 }
 
 // suggestContext is what the suggestion reads: the operator's last few messages (their text only,
@@ -83,11 +105,11 @@ func suggestContext(messages []api.Message) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("The operator's last messages, oldest first:\n")
+	b.WriteString("The operator's last messages to the assistant, oldest first:\n")
 	for i := len(users) - 1; i >= 0; i-- {
 		b.WriteString("<<<\n" + users[i] + "\n>>>\n")
 	}
-	b.WriteString("\nThe end of the assistant's last reply:\n<<<\n" +
+	b.WriteString("\nThe end of the assistant's last reply to the operator (the assistant's words, not the operator's):\n<<<\n" +
 		tail(strings.TrimSpace(blockText(messages[len(messages)-1])), suggestReplyChars) + "\n>>>")
 	return b.String()
 }
@@ -112,8 +134,12 @@ func tail(s string, n int) string {
 	return "[...] " + string(r[len(r)-n:])
 }
 
-// cleanSuggestion is the reply's first non-empty line, without quotes or a "Operator:" label, at
-// most 200 characters; "" when that leaves nothing.
+// suggestMaxChars is the longest suggestion shown. Longer, it isn't one line the operator would
+// type: it's the model carrying on the conversation, and cutting it showed half a sentence (#60).
+const suggestMaxChars = 200
+
+// cleanSuggestion is the reply's first non-empty line, without quotes or a "Operator:" label; ""
+// when that leaves nothing or the line runs past suggestMaxChars.
 func cleanSuggestion(s string) string {
 	s = thinkRE.ReplaceAllString(s, "")
 	for _, line := range strings.Split(s, "\n") {
@@ -124,11 +150,11 @@ func cleanSuggestion(s string) string {
 		for _, p := range []string{"Operator:", "operator:", "User:", "You:"} {
 			line = strings.TrimSpace(strings.TrimPrefix(line, p))
 		}
-		line = strings.Trim(line, "\"'`“”")
-		if r := []rune(line); len(r) > 200 {
-			line = string(r[:200])
+		line = strings.TrimSpace(strings.Trim(line, "\"'`“”"))
+		if len([]rune(line)) > suggestMaxChars {
+			return ""
 		}
-		return strings.TrimSpace(line)
+		return line
 	}
 	return ""
 }
