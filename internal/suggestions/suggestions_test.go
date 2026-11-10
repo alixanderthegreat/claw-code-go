@@ -58,36 +58,46 @@ func TestRead(t *testing.T) {
 
 func TestHeld(t *testing.T) {
 	for _, c := range []struct {
-		name     string
-		accepted int
-		total    int
-		held     bool
+		name         string
+		outAcc, outN int
+		inAcc, inN   int
+		held         bool
 	}{
-		{"no outward entries", 0, 0, false},
-		{"9, all ignored: not enough data", 0, 9, false},
-		{"10, all ignored", 0, 10, true},
-		{"10, 5 accepted", 5, 10, false},
-		{"20, 4 accepted (20%)", 4, 20, true},
+		{"no outward entries", 0, 0, 25, 79, false},
+		{"9, all ignored: not enough data", 0, 9, 25, 79, false},
+		{"10 ignored, inward never taken either", 0, 10, 0, 15, false},
+		{"10 ignored, inward taken a third of the time", 0, 10, 30, 90, true},
+		{"today's log: 3 of 17 against 25 of 79", 3, 17, 25, 79, false},
+		{"2 of 30 against 30 of 100", 2, 30, 30, 100, true},
+		{"as good as inward", 10, 30, 30, 100, false},
 	} {
 		var lines []string
-		for i := 0; i < c.total; i++ {
-			outcome := "ignored"
-			if i < c.accepted {
-				outcome = "accepted"
+		add := func(acc, n int, outward bool) {
+			for i := 0; i < n; i++ {
+				outcome := "ignored"
+				if i < acc {
+					outcome = "accepted"
+				}
+				lines = append(lines, line(outcome, outward, now))
 			}
-			lines = append(lines, line(outcome, true, now))
 		}
-		// Inward suggestions, all ignored, don't move the outward gate.
-		for i := 0; i < 15; i++ {
-			lines = append(lines, line("ignored", false, now))
-		}
+		add(c.outAcc, c.outN, true)
+		add(c.inAcc, c.inN, false)
 		held, why := HeldAt(writeLog(t, lines...))
 		if held != c.held {
 			t.Errorf("%s: held %v, want %v (%s)", c.name, held, c.held, why)
 		}
-		if held && !strings.Contains(why, "outward suggestions held: accept rate") {
+		if held && !strings.Contains(why, "below inward's") {
 			t.Errorf("%s: says %q", c.name, why)
 		}
+	}
+}
+
+func TestProbesCounted(t *testing.T) {
+	p := writeLog(t, line("ignored", true, now), `{"time":"`+now.Format(time.RFC3339)+`","outcome":"accepted","outward":true,"probe":true}`)
+	s, err := Read(p, now)
+	if err != nil || s.Probes != 1 || s.Outward.Total() != 2 {
+		t.Errorf("stats = %+v, %v; want 1 probe of 2 outward", s, err)
 	}
 }
 

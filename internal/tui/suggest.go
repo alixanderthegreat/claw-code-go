@@ -25,6 +25,7 @@ type nextSuggestion struct {
 	gen   int    // which turn's suggestion is wanted: a late answer for an older turn is dropped
 	text  string // shown now, "" when none
 	taken bool   // Tab put it in the box
+	probe bool   // an outward suggestion shown while they're held (#57)
 }
 
 type suggestionMsg struct {
@@ -53,11 +54,18 @@ func (m Model) suggestCmd() tea.Cmd {
 // showSuggestion puts a suggestion in the empty input as its placeholder, if it's still for this
 // turn and the operator hasn't started typing.
 func (m Model) showSuggestion(msg suggestionMsg) Model {
-	if msg.gen != m.suggest.gen || m.state != stateInput || m.textarea.Value() != "" || !suggestionAllowed(msg.text) {
+	if msg.gen != m.suggest.gen || m.state != stateInput || m.textarea.Value() != "" {
 		return m
 	}
-	m.suggest.text = msg.text
+	ok, probe := suggestionAllowed(msg.text)
+	if !ok {
+		return m
+	}
+	m.suggest.text, m.suggest.probe = msg.text, probe
 	m.textarea.Placeholder = msg.text + "   ⇥ Tab"
+	if probe {
+		m.textarea.Placeholder += "  (outward: held, shown to keep learning)"
+	}
 	return m
 }
 
@@ -74,24 +82,44 @@ func (m Model) takeSuggestion() Model {
 // turn starts without one), and clears it.
 func (m Model) endSuggestion(sent string) Model {
 	if m.suggest.text != "" {
-		logSuggestion(m.suggest.text, sent, m.suggest.taken)
+		logSuggestion(m.suggest.text, sent, m.suggest.taken, m.suggest.probe)
 	}
 	m.suggest = nextSuggestion{gen: m.suggest.gen + 1}
 	m.textarea.Placeholder = inputPlaceholder
 	return m
 }
 
-// suggestionAllowed says whether a suggestion may be offered: any that isn't empty, unless it looks
-// outward and the outward gate holds those.
+// suggestionAllowed says whether a suggestion may be offered, and whether it's a probe: any that
+// isn't empty, unless it looks outward and the outward gate holds those - then one in
+// suggestions.ProbeEvery is offered all the same, as a probe, so the log keeps learning (#57).
 //
 // The trial, the operator's call (2026-11-09): #32 proposed holding back an approval of an outward
 // action (a push, a deploy, a merge, a message sent), so that one key can't approve it. Each logged
 // suggestion says whether it looked outward, and the log settles it (#50): once there are enough
-// outward ones and too few were accepted, they're held (suggestions.Held). Inward suggestions are
+// outward ones and they're taken clearly less than inward ones, they're held (suggestions.Held). Inward suggestions are
 // always offered. Permissions and the fences are unchanged either way: a suggestion is only text in
 // the box.
-func suggestionAllowed(s string) bool {
-	return s != "" && (!looksOutward(s) || !outwardHeld())
+func suggestionAllowed(s string) (ok, probe bool) {
+	switch {
+	case s == "":
+		return false, false
+	case !looksOutward(s) || !outwardHeld():
+		return true, false
+	case probeNext():
+		return true, true
+	}
+	return false, false
+}
+
+// probeNext says whether this held outward suggestion is the one in suggestions.ProbeEvery shown.
+var probeNext = probeCounter(suggestions.ProbeEvery)
+
+func probeCounter(every int) func() bool {
+	n := 0
+	return func() bool {
+		n++
+		return n%every == 0
+	}
 }
 
 // outwardHeld says whether the log holds outward suggestions back. It reads the log on every call,
@@ -139,7 +167,7 @@ func suggestionsLog() string { return suggestions.Path() }
 
 // logSuggestion appends one outcome: accepted (sent as suggested), edited (taken, then changed),
 // or ignored (the operator typed their own).
-func logSuggestion(suggested, sent string, taken bool) {
+func logSuggestion(suggested, sent string, taken, probe bool) {
 	outcome := "ignored"
 	switch {
 	case taken && sent == suggested:
@@ -147,10 +175,14 @@ func logSuggestion(suggested, sent string, taken bool) {
 	case taken:
 		outcome = "edited"
 	}
-	appendLog(suggestionsLog(), map[string]any{
+	rec := map[string]any{
 		"time": time.Now().Format(time.RFC3339), "suggested": suggested, "sent": sent, "outcome": outcome,
 		"outward": looksOutward(suggested),
-	})
+	}
+	if probe {
+		rec["probe"] = true
+	}
+	appendLog(suggestionsLog(), rec)
 }
 
 // appendLog adds one JSON line to the log at p, private to the operator.

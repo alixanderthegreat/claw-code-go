@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -52,6 +53,7 @@ type Stats struct {
 	All, Outward, Inward Counts
 	Recent               int // of All, logged in the 30 days before now
 	Skipped              int // lines that aren't a suggestion's outcome
+	Probes               int // outward suggestions shown while held, to keep learning (#57)
 }
 
 // entry is one line of the log, as tui's logSuggestion writes it.
@@ -59,6 +61,7 @@ type entry struct {
 	Time    string `json:"time"`
 	Outcome string `json:"outcome"`
 	Outward bool   `json:"outward"`
+	Probe   bool   `json:"probe"` // shown while outward ones were held (#57)
 	Event   string `json:"event"` // a note about the gate, not a suggestion (see tui's outwardHeld)
 }
 
@@ -93,6 +96,9 @@ func Count(r io.Reader, now time.Time) (Stats, error) {
 			continue
 		}
 		s.All.add(e.Outcome)
+		if e.Probe {
+			s.Probes++
+		}
 		if e.Outward {
 			s.Outward.add(e.Outcome)
 		} else {
@@ -105,25 +111,44 @@ func Count(r io.Reader, now time.Time) (Stats, error) {
 	return s, sc.Err()
 }
 
-// The gate: outward suggestions are held once there are MinOutward of them logged and fewer than
-// HoldBelow percent were accepted as suggested.
-const (
-	MinOutward = 10
-	HoldBelow  = 50.0
-)
+// The gate (#57): outward suggestions are held once there are MinOutward of them logged and they
+// do clearly worse than inward ones - the top of their accept rate's 95% Wilson interval below the
+// inward rate. A fixed bar (50%, #50) held them whatever they did, since inward suggestions don't
+// reach it either; comparing the two asks the trial's question: is an outward suggestion taken
+// less than any other?
+const MinOutward = 10
 
-// Held says whether outward suggestions should be held back, and why, given the outward counts.
-// Under MinOutward entries there isn't enough evidence, so they're offered.
-func Held(outward Counts) (bool, string) {
+// ProbeEvery is how often an outward suggestion is still shown while they're held: one in this
+// many. Held with none shown, nothing new is logged and the gate could never change its mind.
+const ProbeEvery = 5
+
+// wilsonHigh is the top of the 95% Wilson score interval for k of n, as a percentage.
+func wilsonHigh(k, n int) float64 {
+	if n == 0 {
+		return 100
+	}
+	const z = 1.96
+	p, nf := float64(k)/float64(n), float64(n)
+	den := 1 + z*z/nf
+	center := (p + z*z/(2*nf)) / den
+	margin := z * math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf)) / den
+	return 100 * math.Min(1, center+margin)
+}
+
+// Held says whether outward suggestions should be held back, and why, given the outward and
+// inward counts. Under MinOutward outward entries there isn't enough evidence, so they're offered.
+func Held(outward, inward Counts) (bool, string) {
 	n := outward.Total()
 	if n < MinOutward {
 		return false, fmt.Sprintf("outward suggestions offered: %d of %d entries needed to decide", n, MinOutward)
 	}
-	rate := outward.Rate(outward.Accepted)
-	if rate < HoldBelow {
-		return true, fmt.Sprintf("outward suggestions held: accept rate %.1f%% over %d entries", rate, n)
+	rate, high, in := outward.Rate(outward.Accepted), wilsonHigh(outward.Accepted, n), inward.Rate(inward.Accepted)
+	if high < in {
+		return true, fmt.Sprintf("outward suggestions held (1 in %d still shown): accepted %.1f%% of %d, at most %.1f%%, below inward's %.1f%%",
+			ProbeEvery, rate, n, high, in)
 	}
-	return false, fmt.Sprintf("outward suggestions offered: accept rate %.1f%% over %d entries", rate, n)
+	return false, fmt.Sprintf("outward suggestions offered: accepted %.1f%% of %d, not clearly below inward's %.1f%% (could be up to %.1f%%)",
+		rate, n, in, high)
 }
 
 // HeldAt reads the log at path and applies the gate. A missing, empty or unreadable log holds
@@ -136,5 +161,5 @@ func HeldAt(path string) (bool, string) {
 	if err != nil {
 		return false, "outward suggestions offered: " + err.Error()
 	}
-	return Held(s.Outward)
+	return Held(s.Outward, s.Inward)
 }

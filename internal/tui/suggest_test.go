@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -121,9 +122,9 @@ func TestSuggestionNotShown(t *testing.T) {
 
 func TestLogOutcomes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	logSuggestion("a", "a", true)
-	logSuggestion("a", "a b", true)
-	logSuggestion("a", "c", false)
+	logSuggestion("a", "a", true, false)
+	logSuggestion("a", "a b", true, false)
+	logSuggestion("a", "c", false, false)
 	b, _ := os.ReadFile(suggestionsLog())
 	var got []string
 	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
@@ -136,33 +137,86 @@ func TestLogOutcomes(t *testing.T) {
 	}
 }
 
+// allowed is suggestionAllowed's first answer.
+func allowed(s string) bool { ok, _ := suggestionAllowed(s); return ok }
+
+// takenInward logs n inward suggestions, all taken: the rate outward ones are compared with.
+func takenInward(n int) {
+	for i := 0; i < n; i++ {
+		logSuggestion("run the tests", "run the tests", true, false)
+	}
+}
+
 // Every non-empty suggestion is offered while the log holds too few outward ones to decide; once
-// it holds outward ones back (#50), inward ones are still offered. The gate notes itself once.
+// outward ones are taken clearly less than inward ones (#57), they're held, and inward ones are
+// still offered. The gate notes itself once.
 func TestSuggestionAllowed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
-	outwardHeld = outwardGate(suggestionsLog)
-	if suggestionAllowed("") {
+	defer func(g, p func() bool) { outwardHeld, probeNext = g, p }(outwardHeld, probeNext)
+	outwardHeld, probeNext = outwardGate(suggestionsLog), probeCounter(5)
+	if allowed("") {
 		t.Error("an empty suggestion is offered")
 	}
 	for _, s := range []string{"run the tests again", "merge it", "push it to core"} {
-		if !suggestionAllowed(s) {
+		if !allowed(s) {
 			t.Errorf("%q held back with no log", s)
 		}
 	}
 
+	takenInward(10)
 	for i := 0; i < 10; i++ {
-		logSuggestion("push it", "no", false)
+		logSuggestion("push it", "no", false, false)
 	}
-	if suggestionAllowed("merge it") || suggestionAllowed("push it to core") {
-		t.Error("an outward suggestion offered after 10 ignored")
+	if allowed("merge it") || allowed("push it to core") {
+		t.Error("an outward suggestion offered after 10 ignored, against inward ones all taken")
 	}
-	if !suggestionAllowed("run the tests again") {
+	if !allowed("run the tests again") {
 		t.Error("the gate held an inward suggestion")
 	}
 	b, _ := os.ReadFile(suggestionsLog())
-	if n := strings.Count(string(b), "outward suggestions held: accept rate 0.0% over 10 entries"); n != 1 {
+	if n := strings.Count(string(b), "outward suggestions held"); n != 1 {
 		t.Errorf("the gate noted itself %d times, want once: %s", n, b)
+	}
+}
+
+// Outward suggestions ignored as often as inward ones aren't held: the bar is the inward rate.
+func TestOutwardNotHeldWhenNoWorseThanInward(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
+	outwardHeld = outwardGate(suggestionsLog)
+	for i := 0; i < 20; i++ {
+		logSuggestion("push it", "no", false, false)
+		logSuggestion("run the tests", "no", false, false)
+	}
+	if !allowed("push it") {
+		t.Error("held, though inward suggestions fare no better")
+	}
+}
+
+// While held, one outward suggestion in five is still offered, as a probe, and logged as one.
+func TestHeldOutwardProbes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	defer func(g, p func() bool) { outwardHeld, probeNext = g, p }(outwardHeld, probeNext)
+	outwardHeld, probeNext = outwardGate(suggestionsLog), probeCounter(5)
+	takenInward(10)
+	for i := 0; i < 10; i++ {
+		logSuggestion("push it", "no", false, false)
+	}
+	var shown []bool
+	for i := 0; i < 10; i++ {
+		ok, probe := suggestionAllowed("push it")
+		if ok != probe {
+			t.Fatalf("held outward suggestion offered without being a probe")
+		}
+		shown = append(shown, ok)
+	}
+	if fmt.Sprint(shown) != "[false false false false true false false false false true]" {
+		t.Errorf("shown %v, want every fifth", shown)
+	}
+	logSuggestion("push it", "push it", true, true)
+	b, _ := os.ReadFile(suggestionsLog())
+	if !strings.Contains(string(b), `"probe":true`) {
+		t.Errorf("the probe wasn't logged as one: %s", b)
 	}
 }
 
@@ -170,17 +224,18 @@ func TestSuggestionAllowed(t *testing.T) {
 // threshold and the same gate holds from then on, noting it once.
 func TestSuggestionGateCrossedMidProcess(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	defer func(g func() bool) { outwardHeld = g }(outwardHeld)
-	outwardHeld = outwardGate(suggestionsLog)
+	defer func(g, p func() bool) { outwardHeld, probeNext = g, p }(outwardHeld, probeNext)
+	outwardHeld, probeNext = outwardGate(suggestionsLog), probeCounter(5)
+	takenInward(10)
 	for i := 0; i < 9; i++ {
-		logSuggestion("push it", "no", false)
+		logSuggestion("push it", "no", false, false)
 	}
-	if !suggestionAllowed("push it") {
+	if !allowed("push it") {
 		t.Fatal("held at 9 outward entries")
 	}
-	logSuggestion("push it", "no", false)
+	logSuggestion("push it", "no", false, false)
 	for i := 0; i < 3; i++ {
-		if suggestionAllowed("push it") {
+		if allowed("push it") {
 			t.Fatal("offered after the 10th outward entry was logged")
 		}
 	}
@@ -209,7 +264,7 @@ func TestLooksOutward(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", t.TempDir())
-	logSuggestion("merge it", "merge it", true)
+	logSuggestion("merge it", "merge it", true, false)
 	b, _ := os.ReadFile(suggestionsLog())
 	if !strings.Contains(string(b), `"outward":true`) {
 		t.Errorf("the log doesn't mark an outward suggestion: %s", b)
