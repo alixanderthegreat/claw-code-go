@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Gordi's avatar (greatproject #433): the Go gopher - Gophie, called Gordi here - pinned to the
@@ -150,8 +151,9 @@ func avatarTwitch(g [][]byte, c, dx int) {
 
 // renderAvatar draws the gopher with half blocks, two pixels to a character - a top one in the
 // foreground of "▀" and a bottom one behind it - so the splash's 20x11 gopher fits in 20 columns
-// and 6 lines, pixels still square. Then the label, padded to height lines.
-func renderAvatar(s avatarState, frame, height int) string {
+// and 6 lines, pixels still square. Then the label and the panel's other lines (panel.go), padded
+// to height lines.
+func renderAvatar(s avatarState, frame, height int, info ...string) string {
 	g := avatarGrid(s, frame)
 	if len(g)%2 == 1 {
 		g = append(g, []byte(strings.Repeat(".", len(g[0]))))
@@ -178,6 +180,9 @@ func renderAvatar(s avatarState, frame, height int) string {
 	}
 	label := avatarLabels[s]
 	lines = append(lines, "  "+statusStyle.Render(lipgloss.PlaceHorizontal(avatarCols-2, lipgloss.Center, label)))
+	for _, l := range info {
+		lines = append(lines, "  "+ansi.Truncate(l, avatarCols-2, "…"))
+	}
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
@@ -196,5 +201,5 @@ func (m Model) withAvatar(view string) string {
 	// past the terminal's edge.
 	view = lipgloss.NewStyle().MaxWidth(m.chatWidth()).Render(view)
 	h := lipgloss.Height(view)
-	return lipgloss.JoinHorizontal(lipgloss.Top, view, renderAvatar(m.avatarNow(), m.avatarFrame, h))
+	return lipgloss.JoinHorizontal(lipgloss.Top, view, renderAvatar(m.avatarNow(), m.avatarFrame, h, m.panelInfo()...))
 }

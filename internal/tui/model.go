@@ -1821,9 +1821,17 @@ func (m Model) View() string {
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
+	if m.avatarShown() { // the header, hint and status are in the panel (panel.go, #437)
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.withAvatar(m.viewport.View()),
+			activity,
+			divider,
+			inputArea,
+		)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		m.withAvatar(m.viewport.View()),
+		m.viewport.View(),
 		activity,
 		divider,
 		inputArea,
@@ -2108,6 +2116,9 @@ func (m Model) resizeViewport() Model {
 // Layout overhead: header(1) + divider(1) + textarea(textareaRows) + hint(1) + status(1).
 func (m Model) viewportHeight() int {
 	overhead := 5 + textareaRows // header + activity + divider + textarea + hint + status
+	if m.avatarShown() {
+		overhead -= 3 // the header, the hint and the status are in the panel (panel.go, #437)
+	}
 	h := m.height - overhead
 	if h < 1 {
 		h = 1
