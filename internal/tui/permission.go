@@ -138,7 +138,7 @@ func (m Model) viewPermissionOverlay() string {
 	box := m.viewPermission()
 	vp := m.viewport
 	vp.Height = max(m.height-lipgloss.Height(box), 1)
-	return lipgloss.JoinVertical(lipgloss.Left, vp.View(), box)
+	return lipgloss.JoinVertical(lipgloss.Left, m.withAvatar(vp.View()), box)
 }
 
 // permCovers says what "always" would allow for the rest of the session (#28): for bash the kinds
