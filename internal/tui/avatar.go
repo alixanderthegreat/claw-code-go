@@ -52,7 +52,7 @@ func avatarTickCmd() tea.Cmd {
 }
 
 // avatarShown is whether the terminal is wide enough for the avatar beside the chat.
-func (m Model) avatarShown() bool { return m.width >= avatarMinWidth }
+func (m Model) avatarShown() bool { return m.width >= avatarMinWidth && !m.panelHidden }
 
 // chatWidth is the viewport's width: the terminal's, less the avatar's column when it shows.
 func (m Model) chatWidth() int {

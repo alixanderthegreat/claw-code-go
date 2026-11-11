@@ -1,9 +1,14 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"claw-code-go/internal/permissions"
 )
@@ -47,7 +52,7 @@ func (m Model) panelInfo() []string {
 	}
 	lines = append(lines, rule)
 	for _, k := range [][2]string{
-		{"Enter", "send"}, {"Alt+Enter", "newline"}, {"Ctrl+U", "clear"}, {"Ctrl+O", "details"},
+		{"Ctrl+P", "hide panel"}, {"Enter", "send"}, {"Alt+Enter", "newline"}, {"Ctrl+U", "clear"}, {"Ctrl+O", "details"},
 		{"↑↓", "history"}, {"PgUp/Dn", "scroll"}, {"Shift+Tab", "mode"}, {"!cmd", "shell"},
 		{"Shift+R-click", "select"},
 	} {
@@ -111,4 +116,48 @@ func remove(ss []string, s string) []string {
 		}
 	}
 	return out
+}
+
+// The panel's on/off (Ctrl+P, greatproject #440): beside the chat, a copied row picks up the
+// panel's text, so it can be put away to copy and brought back. The choice outlasts the session.
+
+type tuiPrefs struct {
+	PanelHidden bool `json:"panel_hidden"`
+}
+
+// prefsPath is where the TUI's own choices are kept; empty when there's no config directory.
+var prefsPath = func() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "claw-code-go", "tui.json")
+}
+
+func loadPrefs() tuiPrefs {
+	var p tuiPrefs
+	if path := prefsPath(); path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			json.Unmarshal(b, &p) //nolint:errcheck // a bad file is the defaults
+		}
+	}
+	return p
+}
+
+func savePrefs(p tuiPrefs) {
+	path := prefsPath()
+	if path == "" {
+		return
+	}
+	b, _ := json.Marshal(p)
+	os.MkdirAll(filepath.Dir(path), 0o700) //nolint:errcheck
+	os.WriteFile(path, b, 0o600)           //nolint:errcheck // losing the choice costs a key press
+}
+
+// togglePanel puts the panel away or brings it back, and lays the screen out again for it.
+func (m Model) togglePanel() (Model, tea.Cmd) {
+	m.panelHidden = !m.panelHidden
+	savePrefs(tuiPrefs{PanelHidden: m.panelHidden})
+	m = m.resizeViewport()
+	return m.startAvatar()
 }

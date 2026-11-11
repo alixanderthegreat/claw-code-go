@@ -146,13 +146,14 @@ type Model struct {
 	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
-	signs    signPicker    // Ctrl+G's palette of the eleven signs (#35)
-	complete emojiComplete // the emoji row while a shortcode is typed (#37)
+	signs    signPicker     // Ctrl+G's palette of the eleven signs (#35)
+	complete emojiComplete  // the emoji row while a shortcode is typed (#37)
 	suggest  nextSuggestion // the likely next message, as ghost text (#32)
 
 	// Gordi's avatar (avatar.go, #433): its frame, whether its tick is armed, and whether a tool
 	// is running, which turns its eyes down.
 	avatarFrame       int
+	panelHidden       bool // Ctrl+P put the panel away (panel.go, #440)
 	avatarTicking     bool
 	avatarToolRunning bool
 
@@ -284,17 +285,18 @@ func NewModel(cfg *runtime.Config, loop *runtime.ConversationLoop) Model {
 	}
 
 	m := Model{
-		state:    stateInput,
-		textarea: ta,
-		spinner:  s,
-		history:  loadInputHistory(historyPath(cfg.SessionDir)),
-		loop:     loop,
-		cfg:      cfg,
-		viewBuf:  viewBuf,
-		voice:    newVoiceState(cfg),
-		tools:    toolsFromHistory(loop.Session.Messages),
-		md:       md,
-		wrapped:  &wrapCache{},
+		state:       stateInput,
+		textarea:    ta,
+		spinner:     s,
+		history:     loadInputHistory(historyPath(cfg.SessionDir)),
+		panelHidden: loadPrefs().PanelHidden,
+		loop:        loop,
+		cfg:         cfg,
+		viewBuf:     viewBuf,
+		voice:       newVoiceState(cfg),
+		tools:       toolsFromHistory(loop.Session.Messages),
+		md:          md,
+		wrapped:     &wrapCache{},
 	}
 	m.sendModeEvent("start") // the mode this session opens in
 	return m
@@ -593,6 +595,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlO && (m.state == stateInput || m.state == stateBusy) {
 		m = m.openDetails()
 		return m, nil
+	}
+	// Ctrl+P puts the right panel away, for a chat that copies clean, or brings it back (#440).
+	if msg.Type == tea.KeyCtrlP && (m.state == stateInput || m.state == stateBusy) {
+		return m.togglePanel()
 	}
 
 	// Ctrl+G opens the sign picker over the input, while typing or mid-turn; while it's open, keys
@@ -1817,7 +1823,7 @@ func (m Model) View() string {
 	header := m.renderHeader()
 	activity := m.renderActivityRow()
 	divider := dividerStyle.Render(strings.Repeat("─", max(m.width, 0)))
-	hint := statusStyle.Render("Enter=send  Alt+Enter=newline  Ctrl+U=clear  Shift+rightclick='select text'  Ctrl+O=tool details  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
+	hint := statusStyle.Render("Enter=send  Alt+Enter=newline  Ctrl+U=clear  Shift+rightclick='select text'  Ctrl+O=tool details  Ctrl+P=panel  ↑↓=history  PgUp/PgDn=scroll  Shift+Tab=mode  !cmd=shell")
 	statusLine := m.renderStatusBar()
 	inputArea := m.renderInputArea()
 
