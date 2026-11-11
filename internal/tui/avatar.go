@@ -117,24 +117,23 @@ func (m Model) onAvatarTick() (Model, tea.Cmd) {
 	return m, avatarTickCmd()
 }
 
-// avatarGrid is the face for a state at a frame. A pupil is one cell inside the eye, at (dx, dy)
-// from its top-left: row 0 and 3 are the eye's narrow top and bottom, only dx 1-2 there.
+// avatarGrid is the face for a state at a frame. A pupil is 2x2 cells inside the eye, its top-left
+// at (dx, dy) from the eye's: big pupils make the gopher friendly, where one-cell dots in all that
+// white stared (the operator: "he looks so scary"). Only white cells take the pupil, so one near
+// the eye's cut corners keeps the eye round.
 func avatarGrid(s avatarState, frame int) [][]byte {
 	g := make([][]byte, len(avatarFace))
 	for i, row := range avatarFace {
 		g[i] = []byte(row)
 	}
-	// Looking at you: low in each eye, toward the nose.
-	pupil := [2][2]int{{2, 2}, {1, 2}}
+	dx, dy := 1, 1 // looking at you
 	switch s {
 	case avatarThinking: // looking off to one side, then the other
-		dx := []int{0, 0, 3, 3}[frame%4]
-		pupil = [2][2]int{{dx, 1}, {dx, 1}}
+		dx, dy = []int{0, 0, 2, 2}[frame%4], 1
 	case avatarTool: // down at the work, reading across it
-		dx := 1 + frame/2%2
-		pupil = [2][2]int{{dx, 3}, {dx, 3}}
+		dx, dy = 1+frame/2%2, 2
 	case avatarAsking: // up at you
-		pupil = [2][2]int{{2, 0}, {1, 0}}
+		dx, dy = 1, 0
 	case avatarIdle:
 		if frame%avatarBlinkGap == 0 && frame > 0 {
 			for _, c := range eyeCols { // shut: the eye is lid, a dark line across the middle
@@ -152,8 +151,14 @@ func avatarGrid(s avatarState, frame int) [][]byte {
 			return g
 		}
 	}
-	for i, c := range eyeCols {
-		g[eyeTop+pupil[i][1]][c+pupil[i][0]] = 'K'
+	for _, c := range eyeCols {
+		for y := eyeTop + dy; y < eyeTop+dy+2; y++ {
+			for x := c + dx; x < c+dx+2; x++ {
+				if g[y][x] == 'W' {
+					g[y][x] = 'K'
+				}
+			}
+		}
 	}
 	if s == avatarSpeaking && frame%2 == 1 {
 		copy(g[mouthRow], "BBBBBNWWNBBBBB") // the mouth open around the teeth
