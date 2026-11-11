@@ -27,22 +27,24 @@ var avatarLabels = map[avatarState]string{
 	avatarSpeaking: "speaking", avatarAsking: "asking you ?",
 }
 
-// avatarFace is the gopher at rest: round eyes that stand out past the head, small ears, a tan
-// snout with the nose on top and the two buck teeth under it, tan hands and feet. The pupils and
+// avatarFace is the gopher at rest: round eyes that stand out past the head, small ears, a round
+// tan snout with a little black nose on top, and the two buck teeth hanging below it, tan hands and
+// feet. No mouth line: a dark nose over teeth framed in tan read as a grimace (the operator: "he
+// looks so scary", "it is the mouth"). The pupils and
 // the mouth are drawn per frame (avatarGrid).
 //
 // Legend: '.' transparent, 'B' body, 'E' ear, 'W' white (eyes, teeth), 'T' tan (snout, hands,
-// feet), 'N' nose and eyelids, 'K' pupils.
+// feet), 'N' an open mouth and eyelids, 'K' pupils and nose.
 var avatarFace = []string{
 	"..EB......BE..",
 	".BBBBBBBBBBBB.",
 	".BWWBBBBBBWWB.",
 	"BWWWWBBBBWWWWB",
 	"BWWWWBBBBWWWWB",
-	"BBWWBBTTBBWWBB",
-	"BBBBBTNNTBBBBB",
-	"BBBBBTWWTBBBBB",
-	"TBBBBBTTBBBBBT",
+	"BBWWBTKKTBWWBB",
+	"BBBBBTTTTBBBBB",
+	"BBBBBBWWBBBBBB",
+	"TBBBBBBBBBBBBT",
 	".BBBBBBBBBBBB.",
 	"..TT......TT..",
 }
@@ -53,7 +55,7 @@ const (
 	avatarTick     = 250 * time.Millisecond
 	avatarBlinkGap = 16 // idle frames between blinks: one blink every 4s
 	eyeTop         = 2  // the eyes' top row: each is 4 wide and 4 tall, round, corners cut
-	mouthRow       = 7
+	mouthRow       = 6  // the snout's lower row, under the nose
 )
 
 var eyeCols = [2]int{1, 9} // each eye's left column
@@ -63,8 +65,8 @@ var avatarCells = map[byte]lipgloss.Style{
 	'E': lipgloss.NewStyle().Background(lipgloss.Color("74")),  // the ears' inside, a shade darker
 	'W': lipgloss.NewStyle().Background(lipgloss.Color("231")), // white: eyes, teeth
 	'T': lipgloss.NewStyle().Background(lipgloss.Color("223")), // tan: snout, hands, feet
-	'N': lipgloss.NewStyle().Background(lipgloss.Color("238")), // dark: nose, closed lids
-	'K': lipgloss.NewStyle().Background(lipgloss.Color("16")),  // black: pupils
+	'N': lipgloss.NewStyle().Background(lipgloss.Color("238")), // dark: an open mouth, closed lids
+	'K': lipgloss.NewStyle().Background(lipgloss.Color("16")),  // black: pupils, nose
 }
 
 type avatarTickMsg struct{}
@@ -161,8 +163,7 @@ func avatarGrid(s avatarState, frame int) [][]byte {
 		}
 	}
 	if s == avatarSpeaking && frame%2 == 1 {
-		copy(g[mouthRow], "BBBBBNWWNBBBBB") // the mouth open around the teeth
-		copy(g[mouthRow+1], "TBBBBTNNTBBBBT")
+		copy(g[mouthRow], "BBBBBTNNTBBBBB") // the mouth open under the nose, over the teeth
 	}
 	return g
 }
