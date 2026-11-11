@@ -67,3 +67,19 @@ func gridString(g [][]byte) string {
 	}
 	return strings.Join(rows, "\n")
 }
+
+// TestEarsTwitchWhileWorking: while a tool runs his ears move, one and then the other; at rest
+// they stay put (greatproject #434).
+func TestEarsTwitchWhileWorking(t *testing.T) {
+	ears := func(s avatarState, f int) string {
+		g := avatarGrid(s, f)
+		return string(g[0]) + string(g[1])
+	}
+	still := ears(avatarIdle, 1)
+	if ears(avatarTool, 1) == still || ears(avatarTool, 3) == still || ears(avatarTool, 1) == ears(avatarTool, 3) {
+		t.Errorf("the ears don't twitch one and then the other while working")
+	}
+	if ears(avatarTool, 0) != still || ears(avatarThinking, 1) != still {
+		t.Errorf("the ears moved when they should be still")
+	}
+}

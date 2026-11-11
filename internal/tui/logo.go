@@ -7,12 +7,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// mascotGrid is a pixel-art grid of the claw-code-go mascot, the Go gopher (Gordi): one rune per
-// pixel. Each pixel renders as a 2-character-wide colored cell (via
-// background color, not glyphs), so it reads as a roughly square pixel and
-// stays perfectly aligned regardless of the terminal font — unicode
-// box-drawing characters (█▐▌▀▄) render at inconsistent widths across fonts
-// and were the cause of the old mascot's misaligned, unreadable look.
+// mascotGrid is the claw-code-go mascot, the Go gopher (Gordi), one rune per pixel. The avatar in
+// the chat's corner draws him (avatar.go), two pixels to a character.
 //
 // Legend: '.' transparent, 'B' body blue, 'D' dark blue (eyes/nose/outline),
 // 'L' light blue (ear highlight), 'W' white (muzzle/teeth).
@@ -38,30 +34,8 @@ var mascotColors = map[rune]lipgloss.Color{
 	'W': "255", // white
 }
 
-// renderMascot renders mascotGrid as colored 2-space cells, one grid row per
-// terminal line.
-func renderMascot() string {
-	cell := map[rune]lipgloss.Style{}
-	for c, color := range mascotColors {
-		cell[c] = lipgloss.NewStyle().Background(color)
-	}
-
-	lines := make([]string, len(mascotGrid))
-	for i, row := range mascotGrid {
-		var b strings.Builder
-		for _, c := range row {
-			if style, ok := cell[c]; ok {
-				b.WriteString(style.Render("  "))
-			} else {
-				b.WriteString("  ")
-			}
-		}
-		lines[i] = b.String()
-	}
-	return strings.Join(lines, "\n")
-}
-
-// RenderLogo returns a styled splash block: pixel-art mascot + app name + tagline.
+// RenderLogo returns a styled splash block: app name + tagline. The gopher isn't in it any more:
+// he's the avatar in the chat's corner (avatar.go, greatproject #434).
 // Injected into the viewport on startup; scrolls away naturally as the
 // conversation grows.
 func RenderLogo(version string) string {
@@ -74,11 +48,10 @@ func RenderLogo(version string) string {
 	tagStyle := lipgloss.NewStyle().Foreground(dimColor).Italic(true)
 	divStyle := lipgloss.NewStyle().Foreground(divColor)
 
-	gopher := renderMascot()
 	name := nameStyle.Render("claw-code-go")
 	ver := verStyle.Render(" v" + version)
 	tag := tagStyle.Render("A Go port of Claude Code")
 	div := divStyle.Render(strings.Repeat("─", 24))
 
-	return fmt.Sprintf("%s\n\n  %s%s\n  %s\n  %s\n\n", gopher, name, ver, tag, div)
+	return fmt.Sprintf("\n  %s%s\n  %s\n  %s\n\n", name, ver, tag, div)
 }
