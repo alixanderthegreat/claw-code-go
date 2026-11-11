@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// mascotGrid is a pixel-art grid of the claw-code-go cat mascot: one rune per
+// mascotGrid is a pixel-art grid of the claw-code-go mascot, the Go gopher (Gordi): one rune per
 // pixel. Each pixel renders as a 2-character-wide colored cell (via
 // background color, not glyphs), so it reads as a roughly square pixel and
 // stays perfectly aligned regardless of the terminal font — unicode
@@ -30,14 +30,20 @@ var mascotGrid = []string{
 	".BBB..BBB..BBB..BBB.",
 }
 
+// mascotColors are the gopher's colors, for the splash and for the avatar beside the chat (avatar.go).
+var mascotColors = map[rune]lipgloss.Color{
+	'B': "39",  // body blue
+	'D': "24",  // dark blue
+	'L': "117", // light blue
+	'W': "255", // white
+}
+
 // renderMascot renders mascotGrid as colored 2-space cells, one grid row per
 // terminal line.
 func renderMascot() string {
-	cell := map[rune]lipgloss.Style{
-		'B': lipgloss.NewStyle().Background(lipgloss.Color("39")),  // body blue
-		'D': lipgloss.NewStyle().Background(lipgloss.Color("24")),  // dark blue
-		'L': lipgloss.NewStyle().Background(lipgloss.Color("117")), // light blue
-		'W': lipgloss.NewStyle().Background(lipgloss.Color("255")), // white
+	cell := map[rune]lipgloss.Style{}
+	for c, color := range mascotColors {
+		cell[c] = lipgloss.NewStyle().Background(color)
 	}
 
 	lines := make([]string, len(mascotGrid))
@@ -68,11 +74,11 @@ func RenderLogo(version string) string {
 	tagStyle := lipgloss.NewStyle().Foreground(dimColor).Italic(true)
 	divStyle := lipgloss.NewStyle().Foreground(divColor)
 
-	cat := renderMascot()
+	gopher := renderMascot()
 	name := nameStyle.Render("claw-code-go")
 	ver := verStyle.Render(" v" + version)
 	tag := tagStyle.Render("A Go port of Claude Code")
 	div := divStyle.Render(strings.Repeat("─", 24))
 
-	return fmt.Sprintf("%s\n\n  %s%s\n  %s\n  %s\n\n", cat, name, ver, tag, div)
+	return fmt.Sprintf("%s\n\n  %s%s\n  %s\n  %s\n\n", gopher, name, ver, tag, div)
 }

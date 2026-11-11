@@ -150,6 +150,12 @@ type Model struct {
 	complete emojiComplete // the emoji row while a shortcode is typed (#37)
 	suggest  nextSuggestion // the likely next message, as ghost text (#32)
 
+	// Gordi's avatar (avatar.go, #433): its frame, whether its tick is armed, and whether a tool
+	// is running, which turns its eyes down.
+	avatarFrame       int
+	avatarTicking     bool
+	avatarToolRunning bool
+
 	// history for ↑/↓ input navigation
 	history *inputHistory
 
@@ -343,7 +349,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.details {
 			m = m.openDetails()
 		}
-		return m, nil
+		return m.startAvatar()
+
+	case avatarTickMsg:
+		return m.onAvatarTick()
 
 	case tea.MouseMsg:
 		// Without this, the wheel never reaches us as a real mouse event at all - most
@@ -392,6 +401,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForStream(m.streamChan)
 
 	case streamToolMsg:
+		m.avatarToolRunning = true
 		m = m.closeMarkdown()
 		m = m.setActivity("Running "+msg.name+"…", true)
 		if !m.hasStreamContent {
@@ -415,6 +425,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForStream(m.streamChan)
 
 	case streamToolDoneMsg:
+		m.avatarToolRunning = false
 		// The results go back to the model: waiting on it again.
 		m = m.setActivity("Thinking…", true)
 		m = m.recordToolDone(msg.name, msg.result)
@@ -442,6 +453,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForStream(m.streamChan)
 
 	case streamDoneMsg:
+		m.avatarToolRunning = false
 		m = m.closeMarkdown()
 		m = m.clearActivity()
 		// Commit streamBuf to viewBuf with token annotation.
@@ -482,7 +494,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// In permission mode, the viewport fills most of the screen with the
 		// permission box at the bottom. Reserve ~8 lines for the box.
 		m.viewport.Height = m.height - 8
-		m.viewport.Width = m.width
+		m.viewport.Width = m.chatWidth()
 		m = m.refreshViewport()
 		return m, nil
 
@@ -499,7 +511,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewBuf += statusStyle.Render("Gordi asks:") + " " + msg.question + "\n\n"
 		// The viewport gives up as many lines as the box takes.
 		m.viewport.Height = max(3, m.height-lipgloss.Height(m.viewAskUser()))
-		m.viewport.Width = m.width
+		m.viewport.Width = m.chatWidth()
 		m = m.refreshViewport()
 		return m, nil
 
@@ -1791,7 +1803,7 @@ func (m Model) View() string {
 	case statePermission:
 		return m.viewPermissionOverlay()
 	case stateAskUser:
-		return lipgloss.JoinVertical(lipgloss.Top, m.viewport.View(), m.viewAskUser())
+		return lipgloss.JoinVertical(lipgloss.Top, m.withAvatar(m.viewport.View()), m.viewAskUser())
 	case stateLoginProvider:
 		return m.viewLoginProvider()
 	case stateLoginMethod:
@@ -1811,7 +1823,7 @@ func (m Model) View() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		m.viewport.View(),
+		m.withAvatar(m.viewport.View()),
 		activity,
 		divider,
 		inputArea,
@@ -2077,7 +2089,7 @@ func waitForStream(ch <-chan runtime.TurnEvent) tea.Cmd {
 // initViewport creates the viewport and sets textarea width on first resize.
 func (m Model) initViewport() Model {
 	vpHeight := m.viewportHeight()
-	m.viewport = viewport.New(m.width, vpHeight)
+	m.viewport = viewport.New(m.chatWidth(), vpHeight)
 	m.textarea.SetWidth(max(m.width-2, 10))
 	// Through refreshViewport, which wraps: content set raw ran off the edge -
 	// a resumed session's long lines stayed cut until new output redrew it.
@@ -2086,7 +2098,7 @@ func (m Model) initViewport() Model {
 
 // resizeViewport updates dimensions after a window resize.
 func (m Model) resizeViewport() Model {
-	m.viewport.Width = m.width
+	m.viewport.Width = m.chatWidth()
 	m.viewport.Height = m.viewportHeight()
 	m.textarea.SetWidth(max(m.width-2, 10))
 	return m.refreshViewport() // re-wrap to the new width
