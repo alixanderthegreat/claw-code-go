@@ -84,9 +84,29 @@ var Decisions = []Sign{
 	{"🚦", ":status:", "status?"},
 }
 
+// Operators make a decision sign conditional (the operator, 2026-11-10, greatproject #347):
+// "🚀 ? 👀 ❗ => 🚀 ; 🏁" is "look for anything waiting to merge, and if there is, merge it and
+// deploy it".
+var Operators = []Sign{
+	{"👀", ":look:", "go look: check whether it's true"},
+	{"❗", ":do:", "if it's true, do it"},
+}
+
+// Marks join signs into a sentence. Each means one thing.
+var Marks = []Word{
+	{"?", "after a sign: is any pending? (🚀 ? is \"is anything waiting to merge?\")"},
+	{"=>", "then: what follows is what to do"},
+	{";", "and: actions, in order"},
+}
+
+// All is every sign: the eleven, the decisions and the operators.
+func All() []Sign {
+	return append(append(append([]Sign{}, Signs...), Decisions...), Operators...)
+}
+
 // SignCode is the emoji for a sign's shortcode, if it is one.
 func SignCode(code string) (string, bool) {
-	for _, s := range append(append([]Sign{}, Signs...), Decisions...) {
+	for _, s := range All() {
 		if s.Code == code {
 			return s.Emoji, true
 		}
