@@ -47,10 +47,12 @@ func modesFor(model string) ([]string, string) {
 	return nil, ""
 }
 
-// ModesFor is the modes model's template reads from a {REASON:...} tag, nil for none.
+// ModesFor is every mode /mode takes on model: those its template reads from a {REASON:...} tag
+// first, then consult's others, given as a system prompt (promptmodes.go, #441) - those only when
+// consult answers.
 func ModesFor(model string) []string {
 	modes, _ := modesFor(model)
-	return modes
+	return append(append([]string(nil), modes...), promptModes(model)...)
 }
 
 // DefuseReasonTags breaks every {REASON:...} in text the operator didn't write - a summary of the
@@ -65,7 +67,8 @@ const reasonTagPrefix = "{REASON:"
 
 // SupportsReasoningTags reports whether model's chat template reads {REASON:...} tags.
 func SupportsReasoningTags(model string) bool {
-	return ModesFor(model) != nil
+	modes, _ := modesFor(model)
+	return modes != nil
 }
 
 // ParseReasoningMode normalizes s to a mode Jumbo's template accepts, with or without the instruct "i".
@@ -100,19 +103,25 @@ func (loop *ConversationLoop) ReasoningMode() string {
 // in effect. "default" when the history already carries a tag becomes the template's own default
 // (xhigh, or medium for plusIQ): an untagged message would leave the last tag, and its mode, in charge.
 func (loop *ConversationLoop) SetReasoningMode(s string) (string, error) {
-	modes, def := modesFor(loop.Config.Model)
-	if modes == nil {
-		return "", fmt.Errorf("%s doesn't read {REASON:...} tags - modes are for DavidAU's Jumbo, Turbo-Brilliance and plusIQ models", loop.Config.Model)
-	}
+	_, def := modesFor(loop.Config.Model)
+	modes := ModesFor(loop.Config.Model)
 	if strings.EqualFold(strings.TrimSpace(s), "default") {
 		mode := ""
-		if historyHasReasonTag(loop.Session.Messages) {
+		if def != "" && historyHasReasonTag(loop.Session.Messages) {
 			mode = def
 		}
 		loop.Session.ReasoningMode = mode
 		return mode, nil
 	}
 	mode, ok := parseMode(s, modes)
+	if ok {
+		// A prompt mode is checked now, while you're there to hear it: consult has to answer.
+		if name := promptModeName(loop.Config.Model, mode); name != "" {
+			if _, err := consultModes.Prompt(name); err != nil {
+				return "", err
+			}
+		}
+	}
 	if !ok {
 		return "", fmt.Errorf("unknown mode %q - one of: %s (an \"i\" in front for instruct)", s, strings.Join(modes, ", "))
 	}
@@ -129,6 +138,9 @@ var nativeModes = map[string]bool{"xhigh": true, "medium": true, "low": true, "o
 // tool list, so "You are Gordi Code, an AI assistant for software engineering tasks" had the last
 // word: with it, holodeck answered as a coding assistant; without it, as the debate it should be.
 func (loop *ConversationLoop) modeReplacesIdentity() bool {
+	if loop.promptModeText() != "" {
+		return true
+	}
 	if loop.reasoningTag() == "" {
 		return false
 	}
@@ -140,6 +152,16 @@ func (loop *ConversationLoop) reasoningTag() string {
 	mode := loop.ReasoningMode()
 	if mode == "" || !SupportsReasoningTags(loop.Config.Model) {
 		return ""
+	}
+	if promptModeName(loop.Config.Model, mode) != "" {
+		// The persona is in the system prompt; the tag sets the template's own default effort, so
+		// a tag earlier in the history (spoon) doesn't stay in charge under it. Its "i" turns the
+		// thinking off for an instruct form.
+		_, def := modesFor(loop.Config.Model)
+		if loop.promptModeInstruct() {
+			def = "i" + def
+		}
+		return reasonTagPrefix + def + "}"
 	}
 	return reasonTagPrefix + mode + "}"
 }

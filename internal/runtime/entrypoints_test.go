@@ -25,7 +25,7 @@ type scriptedClient struct {
 	input    map[string]any
 	repeat   bool
 	reply    string // the text answer, "done" when empty
-	fail     int // fail this many requests before answering, like an overflow
+	fail     int    // fail this many requests before answering, like an overflow
 	requests []api.CreateMessageRequest
 }
 

@@ -2,11 +2,38 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
 const jumbo = "DavidAU/Qwen3.8-27B-Jumbo-FIQ-747-900-T-Brill-50X-NEO-MTP-Q6_K"
+
+// fakeConsult stands in for consult's GET /modes and /modes/NAME/prompt (#441) for one test.
+func fakeConsult(t *testing.T) {
+	t.Helper()
+	prompts := map[string]string{"joker": "You are The Joker.", "house": "You are Dr. House.", "holodeck": "A holodeck debate.", "spoon": "Qwen Deep Research"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modes" {
+			desc := map[string]string{}
+			for k := range prompts {
+				desc[k] = "a mode"
+			}
+			json.NewEncoder(w).Encode(desc)
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/modes/"), "/prompt")
+		if p, ok := prompts[name]; ok {
+			w.Write([]byte(p))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	consultModes.SetBase(srv.URL)
+	t.Cleanup(func() { srv.Close(); consultModes.SetBase("") })
+}
 
 func modeLoop(model string) (*ConversationLoop, *scriptedClient) {
 	client := &scriptedClient{tool: "bash", input: map[string]any{"command": "true"}}
@@ -85,9 +112,13 @@ func TestParseReasoningMode(t *testing.T) {
 			t.Errorf("ParseReasoningMode(%q) ok = %v, want %v", in, ok, want)
 		}
 	}
+	fakeConsult(t)
 	loop, _ := modeLoop("gpt-4o")
-	if _, err := loop.SetReasoningMode("holodeck"); err == nil {
-		t.Errorf("a model whose template doesn't read tags should refuse a mode")
+	if _, err := loop.SetReasoningMode("xhigh"); err == nil {
+		t.Errorf("a model whose template doesn't read tags took xhigh, which is only a tag")
+	}
+	if _, err := loop.SetReasoningMode("holodeck"); err != nil {
+		t.Errorf("holodeck is a prompt mode on any model (#441): %v", err)
 	}
 }
 
@@ -115,10 +146,8 @@ const plusIQ = "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-plusIQ-TOOLS-
 // TestPlusIQModes: Gordi's seat reads five modes from a tag, defaults to medium, and refuses the
 // Jumbo-only ones (greatproject #431: /mode said it read no tags at all).
 func TestPlusIQModes(t *testing.T) {
+	fakeConsult(t)
 	loop, client := modeLoop(plusIQ)
-	if _, err := loop.SetReasoningMode("holodeck"); err == nil {
-		t.Errorf("plusIQ took holodeck, which its template doesn't read")
-	}
 	for _, m := range []string{"spoon", "ieinstein", "low"} {
 		if _, err := loop.SetReasoningMode(m); err != nil {
 			t.Errorf("plusIQ refused %s: %v", m, err)
@@ -134,8 +163,8 @@ func TestPlusIQModes(t *testing.T) {
 	if mode, _ := loop.SetReasoningMode("default"); mode != "medium" {
 		t.Errorf("default after a tagged message = %q, want medium, plusIQ's own", mode)
 	}
-	if got := ModesFor("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K"); got != nil {
-		t.Errorf("the plain NEO-MAX build has no modes, got %v", got)
+	if got := ModesFor("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K"); len(got) == 0 || got[0] == "xhigh" {
+		t.Errorf("the plain NEO-MAX build has prompt modes only, got %v", got)
 	}
 }
 
@@ -153,5 +182,69 @@ func TestTagsDefusedOutsideTheOperatorsTurns(t *testing.T) {
 	}
 	if got := client.requests[0].Messages[0].Content[0].Text; !strings.Contains(got, "{REASON:spoon}") {
 		t.Errorf("the operator's own tag was changed: %q", got)
+	}
+}
+
+// TestPlusIQPromptModes: on plusIQ, a mode its template doesn't read - joker - goes in the system
+// prompt, less its "introduce yourself" task and with Gordi's identity dropped, while the message
+// carries plusIQ's default effort tag so no earlier tag stays in charge. Its five stay tags
+// (greatproject #441).
+func TestPlusIQPromptModes(t *testing.T) {
+	fakeConsult(t)
+	loop, client := modeLoop(plusIQ)
+	if _, err := loop.SetReasoningMode("ijoker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.SendMessage(context.Background(), "what's next?"); err != nil {
+		t.Fatal(err)
+	}
+	req := client.requests[0]
+	if !strings.HasPrefix(req.System, "You are The Joker.") || strings.Contains(req.System, systemPromptIdentity) {
+		t.Errorf("system prompt: joker first %v, Gordi identity %v", strings.HasPrefix(req.System, "You are The Joker."), strings.Contains(req.System, systemPromptIdentity))
+	}
+	if got := req.Messages[0].Content[0].Text; !strings.HasPrefix(got, "{REASON:imedium} ") || strings.Contains(got, "joker") {
+		t.Errorf("message = %.40q, want plusIQ's default tag in instruct form", got)
+	}
+	modes := ModesFor(plusIQ)
+	if modes[0] != "xhigh" || !strings.Contains(strings.Join(modes, ","), "joker") {
+		t.Errorf("ModesFor(plusIQ) = %v, want its tags first, then joker and the rest", modes)
+	}
+	loop2, client2 := modeLoop(plusIQ)
+	loop2.SetReasoningMode("spoon")
+	loop2.SendMessage(context.Background(), "dig")
+	if r := client2.requests[0]; !strings.HasPrefix(r.Messages[0].Content[0].Text, "{REASON:spoon} ") || strings.Contains(r.System, "Qwen Deep Research") {
+		t.Errorf("spoon on plusIQ should stay a tag, not a system prompt")
+	}
+}
+
+// TestPromptModeWithoutTags: on a model with no tag modes, an instruct prompt mode turns the
+// thinking off in the request, and there's no tag at all.
+func TestPromptModeWithoutTags(t *testing.T) {
+	fakeConsult(t)
+	loop, client := modeLoop("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K")
+	if _, err := loop.SetReasoningMode("ihouse"); err != nil {
+		t.Fatal(err)
+	}
+	loop.SendMessage(context.Background(), "diagnose this")
+	req := client.requests[0]
+	if !req.NoThinking || strings.Contains(req.Messages[0].Content[0].Text, "{REASON") || req.System == "" {
+		t.Errorf("NoThinking %v, message %.30q", req.NoThinking, req.Messages[0].Content[0].Text)
+	}
+}
+
+// TestPromptModeNeedsConsult: with consult out of reach, /mode joker says so and sets nothing;
+// plusIQ's own tag modes still work (#441).
+func TestPromptModeNeedsConsult(t *testing.T) {
+	consultModes.SetBase("http://127.0.0.1:1")
+	t.Cleanup(func() { consultModes.SetBase("") })
+	loop, _ := modeLoop(plusIQ)
+	if _, err := loop.SetReasoningMode("joker"); err == nil {
+		t.Errorf("joker was set with consult unreachable")
+	}
+	if loop.ReasoningMode() != "" {
+		t.Errorf("mode %q set anyway", loop.ReasoningMode())
+	}
+	if _, err := loop.SetReasoningMode("spoon"); err != nil {
+		t.Errorf("spoon is a tag and needs no consult: %v", err)
 	}
 }

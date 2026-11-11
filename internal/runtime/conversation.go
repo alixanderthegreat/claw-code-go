@@ -66,6 +66,10 @@ type ConversationLoop struct {
 // Use NewProviderClient to create an appropriate client for the configured provider.
 func NewConversationLoop(cfg *Config, client api.APIClient) *ConversationLoop {
 	workDir, _ := os.Getwd()
+	// consult holds the prompt modes; find it the way the consult command does (promptmodes.go).
+	if base := consultBase(cfg.BaseURL); base != "" {
+		consultModes.SetBase(base)
+	}
 	return &ConversationLoop{
 		Client:  client,
 		Session: NewSession(),
@@ -186,6 +190,11 @@ func (loop *ConversationLoop) appendUserMessage(userText string) {
 // is correct rather than just "somewhere else".
 func (loop *ConversationLoop) systemPrompt() string {
 	var parts []string
+	// A mode the template can't read from a tag leads the system prompt, where the template puts a
+	// tagged mode's instructions (promptmodes.go, #441).
+	if pm := loop.promptModeText(); pm != "" {
+		parts = append(parts, pm)
+	}
 	if !loop.modeReplacesIdentity() {
 		parts = append(parts, systemPromptIdentity+" "+systemPromptBase)
 	} else {
@@ -393,6 +402,8 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 		Messages:  loop.Session.Messages,
 		Tools:     loop.allTools(),
 		Stream:    true,
+		// An instruct prompt mode on a model without tags turns thinking off this way (#441).
+		NoThinking: loop.promptModeInstruct() && !SupportsReasoningTags(loop.Config.Model),
 	}
 
 	runStart := time.Now()
