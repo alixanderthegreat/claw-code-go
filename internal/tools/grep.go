@@ -59,6 +59,7 @@ func ExecuteGrep(input map[string]any) (string, error) {
 	if !ok || searchPath == "" {
 		return "", fmt.Errorf("grep: 'path' input is required and must be a string")
 	}
+	searchPath = expandHome(searchPath)
 
 	globFilter := ""
 	if g, ok := input["glob"].(string); ok {

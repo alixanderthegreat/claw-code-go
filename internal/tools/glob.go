@@ -39,8 +39,9 @@ func ExecuteGlob(input map[string]any) (string, error) {
 
 	basePath := "."
 	if p, ok := input["path"].(string); ok && p != "" {
-		basePath = p
+		basePath = expandHome(p)
 	}
+	pattern = expandHome(pattern)
 
 	var matches []string
 
