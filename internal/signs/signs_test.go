@@ -105,7 +105,7 @@ func TestDecisions(t *testing.T) {
 	}
 }
 
-// Every mark means something and is defined once (#347).
+// Every mark means something and is defined once (greatproject #347).
 func TestMarks(t *testing.T) {
 	seen := map[string]bool{}
 	for _, m := range Marks {
