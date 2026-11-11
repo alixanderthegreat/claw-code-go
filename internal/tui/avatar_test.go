@@ -34,19 +34,19 @@ func TestAvatarFollowsGordi(t *testing.T) {
 func TestAvatarFitsBesideTheChat(t *testing.T) {
 	m := voiceModel("off")
 	m.viewBuf = "You: " + strings.Repeat("what's at the port ", 30) + "\n"
-	mm, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	mm, cmd := m.Update(tea.WindowSizeMsg{Width: 130, Height: 40})
 	m = mm.(Model)
 	if cmd == nil || !m.avatarTicking {
 		t.Errorf("a wide terminal didn't arm the avatar's tick")
 	}
 	view := m.withAvatar(m.viewport.View()) // the test model has no loop for the header
 	for _, line := range strings.Split(view, "\n") {
-		if w := ansi.StringWidth(line); w > 120 {
-			t.Errorf("a line of %d columns on a 120-column terminal", w)
+		if w := ansi.StringWidth(line); w > 130 {
+			t.Errorf("a line of %d columns on a 130-column terminal", w)
 		}
 	}
-	if m.viewport.Width != 120-avatarCols {
-		t.Errorf("viewport width %d, want %d beside the avatar", m.viewport.Width, 120-avatarCols)
+	if m.viewport.Width != 130-avatarCols {
+		t.Errorf("viewport width %d, want %d beside the avatar", m.viewport.Width, 130-avatarCols)
 	}
 
 	n := voiceModel("off")
