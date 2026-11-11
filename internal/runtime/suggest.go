@@ -56,7 +56,7 @@ func (loop *ConversationLoop) SuggestNext(ctx context.Context, messages []api.Me
 		System:    suggestSystem,
 		Messages: []api.Message{{
 			Role:    "user",
-			Content: []api.ContentBlock{{Type: "text", Text: suggestContext(messages) + "\n\n" + suggestAsk}},
+			Content: []api.ContentBlock{{Type: "text", Text: DefuseReasonTags(suggestContext(messages)) + "\n\n" + suggestAsk}},
 		}},
 		Stream:     true,
 		NoThinking: true,

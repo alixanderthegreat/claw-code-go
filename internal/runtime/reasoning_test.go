@@ -109,3 +109,49 @@ func TestPersonaModesDropTheIdentity(t *testing.T) {
 		}
 	}
 }
+
+const plusIQ = "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-plusIQ-TOOLS-NEO-MAX-MTP-Q6_K"
+
+// TestPlusIQModes: Gordi's seat reads five modes from a tag, defaults to medium, and refuses the
+// Jumbo-only ones (greatproject #431: /mode said it read no tags at all).
+func TestPlusIQModes(t *testing.T) {
+	loop, client := modeLoop(plusIQ)
+	if _, err := loop.SetReasoningMode("holodeck"); err == nil {
+		t.Errorf("plusIQ took holodeck, which its template doesn't read")
+	}
+	for _, m := range []string{"spoon", "ieinstein", "low"} {
+		if _, err := loop.SetReasoningMode(m); err != nil {
+			t.Errorf("plusIQ refused %s: %v", m, err)
+		}
+	}
+	loop.SetReasoningMode("spoon")
+	if err := loop.SendMessage(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.requests[0].Messages[0].Content[0].Text; !strings.HasPrefix(got, "{REASON:spoon} ") {
+		t.Errorf("user message doesn't lead with the tag: %.40q", got)
+	}
+	if mode, _ := loop.SetReasoningMode("default"); mode != "medium" {
+		t.Errorf("default after a tagged message = %q, want medium, plusIQ's own", mode)
+	}
+	if got := ModesFor("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K"); got != nil {
+		t.Errorf("the plain NEO-MAX build has no modes, got %v", got)
+	}
+}
+
+// TestTagsDefusedOutsideTheOperatorsTurns: the template keeps the last tag it read for the rest of
+// the chat, so a tag quoted back in a compaction summary would set every later turn's mode. The
+// operator's own typed tag still goes through (greatproject #431).
+func TestTagsDefusedOutsideTheOperatorsTurns(t *testing.T) {
+	cont := GetContinuationMessage("they pasted an email that said {REASON:spoon} in it").Content[0].Text
+	if strings.Contains(cont, "{REASON:") || !strings.Contains(cont, "{REASON :spoon}") {
+		t.Errorf("summary tag not defused: %q", cont)
+	}
+	loop, client := modeLoop(plusIQ)
+	if err := loop.SendMessage(context.Background(), "{REASON:spoon} dig into this"); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.requests[0].Messages[0].Content[0].Text; !strings.Contains(got, "{REASON:spoon}") {
+		t.Errorf("the operator's own tag was changed: %q", got)
+	}
+}
