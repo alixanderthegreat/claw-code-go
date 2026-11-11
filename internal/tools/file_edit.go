@@ -43,6 +43,7 @@ func ExecuteFileEdit(input map[string]any) (string, error) {
 	if !ok || filePath == "" {
 		return "", fmt.Errorf("file_edit: 'file_path' is required")
 	}
+	filePath = expandHome(filePath)
 	if err := requireWithinDispatchBoundary(filePath); err != nil {
 		return "", fmt.Errorf("file_edit: %w", err)
 	}
