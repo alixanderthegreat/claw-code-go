@@ -574,6 +574,30 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			summary := SummarizeToolInput(inputMap)
 			asked := false // a permission box asked you about this call
 
+			// A tool that doesn't exist fails here, before the permission check: asking the
+			// user to allow it only led to the same error (greatproject #432).
+			if !loop.knownTool(tb.name) {
+				text := "Error: " + unknownToolError(tb.name).Error()
+				toolResults = append(toolResults, api.ContentBlock{
+					Type:      "tool_result",
+					ToolUseID: tb.id,
+					Content:   []api.ContentBlock{{Type: "text", Text: text}},
+					IsError:   true,
+				})
+				loop.emitTool(tb.name, 0, true, false, false, "")
+				select {
+				case events <- TurnEvent{Type: TurnEventToolStart, ToolName: tb.name, ToolInput: summary, ToolArgs: inputMap}:
+				case <-ctx.Done():
+					return cancelled(i)
+				}
+				select {
+				case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: text, ToolFailed: true}:
+				case <-ctx.Done():
+					return cancelled(i + 1)
+				}
+				continue
+			}
+
 			// --- Permission check (Phase 5) ---
 			// Not for ask_user: all it does is ask the user, and their answer is the consent -
 			// asking permission to ask hid the question in a box that cut it short.
@@ -954,7 +978,7 @@ func (loop *ConversationLoop) dispatchTool(name string, input map[string]any) ap
 				}
 			}
 		}
-		err = fmt.Errorf("unknown tool: %s", name)
+		err = unknownToolError(name)
 	}
 
 	isError := err != nil

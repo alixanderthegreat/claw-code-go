@@ -959,7 +959,7 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 	case "/handoff":
 		return m.handleHandoff(parts)
 
-	case "/mode":
+	case "/mode", "/modes":
 		return m.handleModeCommand(parts)
 
 	case "/voice":
@@ -1446,9 +1446,16 @@ func (m Model) handleModeCommand(parts []string) (tea.Model, tea.Cmd) {
 		if mode == "" {
 			mode = "the model's default"
 		}
+		modes := runtime.ModesFor(m.loop.Config.Model)
+		if len(modes) == 0 {
+			m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Reasoning mode: %s\nThis model's template reads no mode tags.", mode))
+			m = m.refreshViewport()
+			return m, nil
+		}
+		// The example is one of this model's own modes: plusIQ refuses Jumbo's holodeck (greatproject #432).
 		m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Reasoning mode: %s\nModes: %s\n"+
-			`An "i" in front is the instruct form (thinking off), e.g. /mode iholodeck. /mode default resets.`,
-			mode, strings.Join(runtime.ModesFor(m.loop.Config.Model), ", ")))
+			`An "i" in front is the instruct form (thinking off), e.g. /mode i%s. /mode default resets.`,
+			mode, strings.Join(modes, ", "), modes[len(modes)-1]))
 		m = m.refreshViewport()
 		return m, nil
 	}
@@ -1916,7 +1923,7 @@ func (m Model) viewHelp() string {
 		"",
 		statusStyle.Render("Model & Config"),
 		"  "+userLabelStyle.Render("/model")+"                          Change the active model (picker)",
-		"  "+userLabelStyle.Render("/mode")+" [mode|default]            This session's reasoning mode (Jumbo/Turbo-Brilliance)",
+		"  "+userLabelStyle.Render("/mode")+" [mode|default]            This session's reasoning mode (Jumbo, Turbo-Brilliance, plusIQ)",
 		"  "+userLabelStyle.Render("/voice")+" [auto|on|off]            When replies are said aloud (auto: when you spoke)",
 		"  "+userLabelStyle.Render("/config")+"                         Show all config values",
 		"  "+userLabelStyle.Render("/config")+" <key>                   Show one config value",
