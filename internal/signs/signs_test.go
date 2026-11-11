@@ -84,14 +84,14 @@ func TestSignCode(t *testing.T) {
 	}
 }
 
-// The decision signs are single code points (the format rule), distinct from the eleven, and
-// their shortcodes resolve.
+// The decision signs and the operators are single code points (the format rule), distinct from
+// the eleven and each other, and their shortcodes resolve.
 func TestDecisions(t *testing.T) {
 	seen := map[string]bool{}
 	for _, s := range Signs {
 		seen[s.Emoji], seen[s.Code] = true, true
 	}
-	for _, d := range Decisions {
+	for _, d := range append(append([]Sign{}, Decisions...), Operators...) {
 		if n := len([]rune(d.Emoji)); n != 1 {
 			t.Errorf("%s is %d code points", d.Emoji, n)
 		}
@@ -102,5 +102,19 @@ func TestDecisions(t *testing.T) {
 		if e, ok := SignCode(d.Code); !ok || e != d.Emoji {
 			t.Errorf("%s doesn't resolve", d.Code)
 		}
+	}
+}
+
+// Every mark means something and is defined once (#347).
+func TestMarks(t *testing.T) {
+	seen := map[string]bool{}
+	for _, m := range Marks {
+		if m.Means == "" || seen[m.Name] {
+			t.Errorf("mark %q: empty meaning or defined twice", m.Name)
+		}
+		seen[m.Name] = true
+	}
+	if e, ok := SignCode(":look:"); !ok || e != "👀" {
+		t.Errorf(":look: = %q, %v", e, ok)
 	}
 }
