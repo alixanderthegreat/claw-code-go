@@ -30,14 +30,20 @@ var mascotGrid = []string{
 	".BBB..BBB..BBB..BBB.",
 }
 
+// mascotColors are the gopher's colors, for the splash and for the avatar beside the chat (avatar.go).
+var mascotColors = map[rune]lipgloss.Color{
+	'B': "39",  // body blue
+	'D': "24",  // dark blue
+	'L': "117", // light blue
+	'W': "255", // white
+}
+
 // renderMascot renders mascotGrid as colored 2-space cells, one grid row per
 // terminal line.
 func renderMascot() string {
-	cell := map[rune]lipgloss.Style{
-		'B': lipgloss.NewStyle().Background(lipgloss.Color("39")),  // body blue
-		'D': lipgloss.NewStyle().Background(lipgloss.Color("24")),  // dark blue
-		'L': lipgloss.NewStyle().Background(lipgloss.Color("117")), // light blue
-		'W': lipgloss.NewStyle().Background(lipgloss.Color("255")), // white
+	cell := map[rune]lipgloss.Style{}
+	for c, color := range mascotColors {
+		cell[c] = lipgloss.NewStyle().Background(color)
 	}
 
 	lines := make([]string, len(mascotGrid))
