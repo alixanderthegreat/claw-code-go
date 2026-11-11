@@ -1448,7 +1448,7 @@ func (m Model) handleModeCommand(parts []string) (tea.Model, tea.Cmd) {
 		}
 		m.viewBuf += renderBlock(statusStyle, fmt.Sprintf("Reasoning mode: %s\nModes: %s\n"+
 			`An "i" in front is the instruct form (thinking off), e.g. /mode iholodeck. /mode default resets.`,
-			mode, strings.Join(runtime.ReasoningModes, ", ")))
+			mode, strings.Join(runtime.ModesFor(m.loop.Config.Model), ", ")))
 		m = m.refreshViewport()
 		return m, nil
 	}

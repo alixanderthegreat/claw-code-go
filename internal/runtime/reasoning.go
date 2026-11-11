@@ -8,7 +8,7 @@ import (
 )
 
 // reasoning.go: DavidAU's reasoning and instruct modes - {REASON:holodeck} - for the models whose
-// chat template reads them (Jumbo, Turbo-Brilliance). The template, embedded in the GGUF, looks for
+// chat template reads them (Jumbo, Turbo-Brilliance, and the plusIQ builds with a shorter list). The template, embedded in the GGUF, looks for
 // the tag in USER messages only and the last tagged one wins: it strips the tag and puts that
 // mode's instructions at the head of the system block. A tag in the system prompt is never read -
 // it reaches the model as plain text, which is why /mode used to do nothing.
@@ -30,25 +30,57 @@ var ReasoningModes = []string{
 	"brainstorm", "comedy", "business", "story", "teacher", "007", "coder", "stark", "matlock", "house",
 }
 
-// defaultReasoningMode is what the template uses for reasoning when no message is tagged.
-const defaultReasoningMode = "xhigh"
+// PlusIQModes are the plusIQ builds' modes (Qwen3.5-9B The Defiant Fable plusIQ-TOOLS, Gordi's
+// seat; greatproject #431): the template takes only these five from a tag, and defaults to medium.
+var PlusIQModes = []string{"xhigh", "medium", "low", "einstein", "spoon"}
+
+// modesFor is the modes model's template reads from a tag, and the one it uses when no message is
+// tagged; nil for a template without modes.
+func modesFor(model string) ([]string, string) {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "plusiq"):
+		return PlusIQModes, "medium"
+	case strings.Contains(m, "jumbo") || strings.Contains(m, "brill"):
+		return ReasoningModes, "xhigh"
+	}
+	return nil, ""
+}
+
+// ModesFor is the modes model's template reads from a {REASON:...} tag, nil for none.
+func ModesFor(model string) []string {
+	modes, _ := modesFor(model)
+	return modes
+}
+
+// DefuseReasonTags breaks every {REASON:...} in text the operator didn't write - a summary of the
+// history, the history quoted back to the model - so the template doesn't read it as a mode
+// switch. The template keeps the last tag it read for the rest of the chat, so one tag left in
+// would set the mode of every turn after it (greatproject #431).
+func DefuseReasonTags(text string) string {
+	return strings.ReplaceAll(text, reasonTagPrefix, "{REASON :")
+}
 
 const reasonTagPrefix = "{REASON:"
 
 // SupportsReasoningTags reports whether model's chat template reads {REASON:...} tags.
 func SupportsReasoningTags(model string) bool {
-	m := strings.ToLower(model)
-	return strings.Contains(m, "jumbo") || strings.Contains(m, "brill")
+	return ModesFor(model) != nil
 }
 
-// ParseReasoningMode normalizes s to a mode the template accepts, with or without the instruct "i".
+// ParseReasoningMode normalizes s to a mode Jumbo's template accepts, with or without the instruct "i".
 func ParseReasoningMode(s string) (string, bool) {
+	return parseMode(s, ReasoningModes)
+}
+
+// parseMode normalizes s to one of modes, with or without the instruct "i".
+func parseMode(s string, modes []string) (string, bool) {
 	mode := strings.ToLower(strings.TrimSpace(s))
 	key := mode
 	if strings.HasPrefix(key, "i") && len(key) > 1 {
 		key = key[1:]
 	}
-	for _, m := range ReasoningModes {
+	for _, m := range modes {
 		if m == key || m == mode {
 			return mode, true
 		}
@@ -65,23 +97,24 @@ func (loop *ConversationLoop) ReasoningMode() string {
 }
 
 // SetReasoningMode sets the session's mode from s - a mode, or "default" - and returns the one now
-// in effect. "default" when the history already carries a tag becomes xhigh, the template's own
-// default: an untagged message would leave the last tag, and its mode, in charge.
+// in effect. "default" when the history already carries a tag becomes the template's own default
+// (xhigh, or medium for plusIQ): an untagged message would leave the last tag, and its mode, in charge.
 func (loop *ConversationLoop) SetReasoningMode(s string) (string, error) {
-	if !SupportsReasoningTags(loop.Config.Model) {
-		return "", fmt.Errorf("%s doesn't read {REASON:...} tags - modes are for DavidAU's Jumbo/Turbo-Brilliance models", loop.Config.Model)
+	modes, def := modesFor(loop.Config.Model)
+	if modes == nil {
+		return "", fmt.Errorf("%s doesn't read {REASON:...} tags - modes are for DavidAU's Jumbo, Turbo-Brilliance and plusIQ models", loop.Config.Model)
 	}
 	if strings.EqualFold(strings.TrimSpace(s), "default") {
 		mode := ""
 		if historyHasReasonTag(loop.Session.Messages) {
-			mode = defaultReasoningMode
+			mode = def
 		}
 		loop.Session.ReasoningMode = mode
 		return mode, nil
 	}
-	mode, ok := ParseReasoningMode(s)
+	mode, ok := parseMode(s, modes)
 	if !ok {
-		return "", fmt.Errorf("unknown mode %q - one of: %s (an \"i\" in front for instruct)", s, strings.Join(ReasoningModes, ", "))
+		return "", fmt.Errorf("unknown mode %q - one of: %s (an \"i\" in front for instruct)", s, strings.Join(modes, ", "))
 	}
 	loop.Session.ReasoningMode = mode
 	return mode, nil

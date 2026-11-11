@@ -19,7 +19,7 @@ func RegisterReasoningCommand(r *Registry) {
 			}
 			if strings.TrimSpace(args) == "" {
 				fmt.Println(describeMode(l.ReasoningMode()))
-				fmt.Println("Modes: " + strings.Join(runtime.ReasoningModes, ", ") + ` (an "i" in front for instruct)`)
+				fmt.Println("Modes: " + strings.Join(runtime.ModesFor(l.Config.Model), ", ") + ` (an "i" in front for instruct)`)
 				return nil
 			}
 			mode, err := l.SetReasoningMode(args)

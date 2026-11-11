@@ -244,7 +244,7 @@ func CompactSession(ctx context.Context, client api.APIClient, cfg *Config, sess
 		summary, err = requestSummary(ctx, client, api.CreateMessageRequest{
 			Model:     cfg.Model,
 			MaxTokens: compactSummaryMaxTokens,
-			Messages:  []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: transcript}}}},
+			Messages:  []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: DefuseReasonTags(transcript)}}}},
 			Stream:    true,
 		})
 		if err != nil {
@@ -397,7 +397,7 @@ func foldSections(ctx context.Context, client api.APIClient, cfg *Config, sessio
 		Model:     cfg.Model,
 		MaxTokens: compactSummaryMaxTokens,
 		Messages: []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf(
-			foldInstruction+"\n\n---EARLIER SECTIONS---\n%s\n---END EARLIER SECTIONS---", words, oldest)}}}},
+			foldInstruction+"\n\n---EARLIER SECTIONS---\n%s\n---END EARLIER SECTIONS---", words, DefuseReasonTags(oldest))}}}},
 		Stream: true,
 	})
 	folded, _ = splitSummary(folded)
@@ -514,7 +514,7 @@ func trimToolResults(msg api.Message, maxTokens int) api.Message {
 func GetContinuationMessage(summary string) api.Message {
 	text := fmt.Sprintf(
 		continuationPrefix+" to stay within context limits.\n\nSummary of prior context:\n%s\n\nContinuing from here.]",
-		summary,
+		DefuseReasonTags(summary),
 	)
 	return api.Message{
 		Role: "user",
