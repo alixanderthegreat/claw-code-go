@@ -86,8 +86,11 @@ func TestParseReasoningMode(t *testing.T) {
 		}
 	}
 	loop, _ := modeLoop("gpt-4o")
-	if _, err := loop.SetReasoningMode("holodeck"); err == nil {
-		t.Errorf("a model whose template doesn't read tags should refuse a mode")
+	if _, err := loop.SetReasoningMode("xhigh"); err == nil {
+		t.Errorf("a model whose template doesn't read tags took xhigh, which is only a tag")
+	}
+	if _, err := loop.SetReasoningMode("holodeck"); err != nil {
+		t.Errorf("holodeck is a prompt mode on any model (#441): %v", err)
 	}
 }
 
@@ -116,9 +119,6 @@ const plusIQ = "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-plusIQ-TOOLS-
 // Jumbo-only ones (greatproject #431: /mode said it read no tags at all).
 func TestPlusIQModes(t *testing.T) {
 	loop, client := modeLoop(plusIQ)
-	if _, err := loop.SetReasoningMode("holodeck"); err == nil {
-		t.Errorf("plusIQ took holodeck, which its template doesn't read")
-	}
 	for _, m := range []string{"spoon", "ieinstein", "low"} {
 		if _, err := loop.SetReasoningMode(m); err != nil {
 			t.Errorf("plusIQ refused %s: %v", m, err)
@@ -134,8 +134,8 @@ func TestPlusIQModes(t *testing.T) {
 	if mode, _ := loop.SetReasoningMode("default"); mode != "medium" {
 		t.Errorf("default after a tagged message = %q, want medium, plusIQ's own", mode)
 	}
-	if got := ModesFor("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K"); got != nil {
-		t.Errorf("the plain NEO-MAX build has no modes, got %v", got)
+	if got := ModesFor("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K"); len(got) == 0 || got[0] == "xhigh" {
+		t.Errorf("the plain NEO-MAX build has prompt modes only, got %v", got)
 	}
 }
 
@@ -153,5 +153,51 @@ func TestTagsDefusedOutsideTheOperatorsTurns(t *testing.T) {
 	}
 	if got := client.requests[0].Messages[0].Content[0].Text; !strings.Contains(got, "{REASON:spoon}") {
 		t.Errorf("the operator's own tag was changed: %q", got)
+	}
+}
+
+// TestPlusIQPromptModes: on plusIQ, a mode its template doesn't read - joker - goes in the system
+// prompt, less its "introduce yourself" task and with Gordi's identity dropped, while the message
+// carries plusIQ's default effort tag so no earlier tag stays in charge. Its five stay tags
+// (greatproject #441).
+func TestPlusIQPromptModes(t *testing.T) {
+	loop, client := modeLoop(plusIQ)
+	if _, err := loop.SetReasoningMode("ijoker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.SendMessage(context.Background(), "what's next?"); err != nil {
+		t.Fatal(err)
+	}
+	req := client.requests[0]
+	if !strings.Contains(req.System, "The Joker") || strings.Contains(req.System, "Introduce yourself") || strings.Contains(req.System, systemPromptIdentity) {
+		t.Errorf("system prompt: joker %v, introduce task %v, Gordi identity %v",
+			strings.Contains(req.System, "The Joker"), strings.Contains(req.System, "Introduce yourself"), strings.Contains(req.System, systemPromptIdentity))
+	}
+	if got := req.Messages[0].Content[0].Text; !strings.HasPrefix(got, "{REASON:imedium} ") || strings.Contains(got, "joker") {
+		t.Errorf("message = %.40q, want plusIQ's default tag in instruct form", got)
+	}
+	modes := ModesFor(plusIQ)
+	if modes[0] != "xhigh" || !strings.Contains(strings.Join(modes, ","), "joker") {
+		t.Errorf("ModesFor(plusIQ) = %v, want its tags first, then joker and the rest", modes)
+	}
+	loop2, client2 := modeLoop(plusIQ)
+	loop2.SetReasoningMode("spoon")
+	loop2.SendMessage(context.Background(), "dig")
+	if r := client2.requests[0]; !strings.HasPrefix(r.Messages[0].Content[0].Text, "{REASON:spoon} ") || strings.Contains(r.System, "Qwen Deep Research") {
+		t.Errorf("spoon on plusIQ should stay a tag, not a system prompt")
+	}
+}
+
+// TestPromptModeWithoutTags: on a model with no tag modes, an instruct prompt mode turns the
+// thinking off in the request, and there's no tag at all.
+func TestPromptModeWithoutTags(t *testing.T) {
+	loop, client := modeLoop("DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-Q6_K")
+	if _, err := loop.SetReasoningMode("ihouse"); err != nil {
+		t.Fatal(err)
+	}
+	loop.SendMessage(context.Background(), "diagnose this")
+	req := client.requests[0]
+	if !req.NoThinking || strings.Contains(req.Messages[0].Content[0].Text, "{REASON") || req.System == "" {
+		t.Errorf("NoThinking %v, message %.30q", req.NoThinking, req.Messages[0].Content[0].Text)
 	}
 }
