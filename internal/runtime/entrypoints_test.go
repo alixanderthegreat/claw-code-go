@@ -24,6 +24,7 @@ type scriptedClient struct {
 	tool     string
 	input    map[string]any
 	repeat   bool
+	reply    string // the text answer, "done" when empty
 	fail     int // fail this many requests before answering, like an overflow
 	requests []api.CreateMessageRequest
 }
@@ -59,7 +60,11 @@ func (c *scriptedClient) StreamResponse(_ context.Context, req api.CreateMessage
 		ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "tool_use"}
 	} else {
 		ch <- api.StreamEvent{Type: api.EventContentBlockStart, ContentBlock: api.ContentBlockInfo{Type: "text"}}
-		ch <- api.StreamEvent{Type: api.EventContentBlockDelta, Delta: api.Delta{Type: "text_delta", Text: "done"}}
+		reply := c.reply
+		if reply == "" {
+			reply = "done"
+		}
+		ch <- api.StreamEvent{Type: api.EventContentBlockDelta, Delta: api.Delta{Type: "text_delta", Text: reply}}
 		ch <- api.StreamEvent{Type: api.EventContentBlockStop}
 		ch <- api.StreamEvent{Type: api.EventMessageDelta, StopReason: "end_turn"}
 	}
