@@ -54,8 +54,8 @@ func TestEveryWordMeansSomething(t *testing.T) {
 		}
 		emoji[s.Emoji], codes[s.Code] = true, true
 	}
-	if len(Signs) != 12 {
-		t.Errorf("%d signs, want the twelve", len(Signs))
+	if len(Signs) != 11 {
+		t.Errorf("%d signs, want the eleven", len(Signs))
 	}
 }
 
@@ -84,7 +84,7 @@ func TestSignCode(t *testing.T) {
 	}
 }
 
-// The decision signs are single code points (the format rule), distinct from the twelve, and
+// The decision signs are single code points (the format rule), distinct from the eleven, and
 // their shortcodes resolve.
 func TestDecisions(t *testing.T) {
 	seen := map[string]bool{}

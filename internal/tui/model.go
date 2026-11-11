@@ -146,7 +146,7 @@ type Model struct {
 	viewport viewport.Model
 	textarea textarea.Model
 	spinner  spinner.Model
-	signs    signPicker    // Ctrl+G's palette of the twelve signs (#35)
+	signs    signPicker    // Ctrl+G's palette of the eleven signs (#35)
 	complete emojiComplete // the emoji row while a shortcode is typed (#37)
 	suggest  nextSuggestion // the likely next message, as ghost text (#32)
 
