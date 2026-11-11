@@ -11,7 +11,7 @@ import (
 )
 
 // Emoji shortcodes resolve as they're typed (#33): most terminals have no emoji picker, so
-// `:checkered_flag:` is the way to type 🏁. The set is GitHub's and Slack's, after the twelve
+// `:checkered_flag:` is the way to type 🏁. The set is GitHub's and Slack's, after the eleven
 // signs of the starting language (`:stuck:` -> 🧱).
 var shortcodes = sync.OnceValue(emoji.CodeMap)
 

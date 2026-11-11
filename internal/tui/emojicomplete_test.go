@@ -153,7 +153,7 @@ func TestEmojiRowWidth(t *testing.T) {
 	}
 }
 
-// The twelve signs are drawn together in Ctrl+G's palette, so each must be steady too.
+// The eleven signs are drawn together in Ctrl+G's palette, so each must be steady too.
 func TestSignsAreSteady(t *testing.T) {
 	for _, s := range signs.Signs {
 		if !steadyWidth(s.Emoji) {

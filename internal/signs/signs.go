@@ -56,15 +56,16 @@ type Sign struct {
 	Emoji, Code, Means string
 }
 
-// Signs are the twelve, for a glance or a reaction. Each means one thing only.
+// Signs are the eleven, for a glance or a reaction. Each means one thing only. ✅ is done
+// (the operator, 2026-11-10: 🟢 can't be typed in their terminal); "yes" to an ask is 🤝, a
+// decision sign, so ✅ no longer means it.
 var Signs = []Sign{
-	{"🟢", ":done:", "done, checked"},
+	{"✅", ":done:", "done, checked"},
 	{"🧱", ":stuck:", "stuck"},
 	{"⏳", ":waiting:", "waiting on someone"},
 	{"🙋", ":need:", "needs a decision or access"},
 	{"🚧", ":blocked:", "blocked by a rule or fence"},
 	{"❔", ":unsure:", "unsure"},
-	{"✅", ":yes:", "yes"},
 	{"❌", ":no:", "no"},
 	{"🤔", ":why:", "not yet: explain"},
 	{"🔁", ":retry:", "try again"},

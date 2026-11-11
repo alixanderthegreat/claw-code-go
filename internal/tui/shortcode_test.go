@@ -88,9 +88,9 @@ func TestSignPicker(t *testing.T) {
 		t.Fatalf("Enter: open %v, value %q", m.signs.open, m.textarea.Value())
 	}
 	press(tea.KeyMsg{Type: tea.KeyCtrlG})
-	press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}}) // ✅
+	press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}}) // ✅ done
 	if m.textarea.Value() != "night: 🧱✅" {
-		t.Errorf("key 7: value %q", m.textarea.Value())
+		t.Errorf("key 1: value %q", m.textarea.Value())
 	}
 	press(tea.KeyMsg{Type: tea.KeyCtrlG})
 	press(tea.KeyMsg{Type: tea.KeyEsc})

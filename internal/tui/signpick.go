@@ -10,7 +10,7 @@ import (
 	"claw-code-go/internal/signs"
 )
 
-// The sign picker (#35): Ctrl+G opens a one-line palette of the twelve signs over the input, since
+// The sign picker (#35): Ctrl+G opens a one-line palette of the eleven signs over the input, since
 // most terminals have no emoji picker. ←/→ move, a key from signKeys picks directly, Enter inserts
 // the one selected, Esc or Ctrl+G closes.
 type signPicker struct {
@@ -18,7 +18,7 @@ type signPicker struct {
 	at   int
 }
 
-// signKeys picks a sign directly: 1-9, 0, -, = for the twelve, in order.
+// signKeys picks a sign directly: 1-9, 0, -, = for the eleven, in order.
 const signKeys = "1234567890-="
 
 func (m Model) handleSignKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
