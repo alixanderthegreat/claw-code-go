@@ -292,6 +292,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	// exchange: a model stuck on a bad call usually makes one per response,
 	// so a count that restarts every response would never reach the limit.
 	var invalidStreak int
+	toolRounds, nudged := 0, false // for the promise check (promise.go)
 
 	for {
 		// Compact history if approaching the token budget (Phase 6). Checked
@@ -339,7 +340,23 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 			totalCached += cachedTok
 		}
 
+		if stopReason == "tool_use" {
+			toolRounds++
+		}
 		if stopReason != "tool_use" && stopReason != stopRetry {
+			// A turn that worked and then ended on "next, I'll ..." gets one nudge to take that
+			// step or report (greatproject #435). Only after tool use: a chat reply can say what
+			// it would do.
+			if n := len(loop.Session.Messages); toolRounds > 0 && !nudged && n > 0 &&
+				loop.Session.Messages[n-1].Role == "assistant" && endsOnPromise(loop.Session.Messages[n-1]) {
+				nudged = true
+				loop.Session.Messages = append(loop.Session.Messages, api.Message{
+					Role:    "user",
+					Content: []api.ContentBlock{{Type: "text", Text: promiseNudge}},
+				})
+				events <- TurnEvent{Type: TurnEventThinkingDelta, Text: "\n\n[the reply ended on a promise: nudged once to do it or report]\n\n"}
+				continue
+			}
 			break
 		}
 	}
