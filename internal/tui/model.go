@@ -495,8 +495,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.askUserQuestion = msg.question
 		m.askUserReplyCh = msg.reply
 		m.state = stateAskUser
-		// Reserve ~10 lines for the ask_user box
-		m.viewport.Height = m.height - 10
+		// The question also goes in the chat, where it stays after it's answered (greatproject #357).
+		m.viewBuf += statusStyle.Render("Gordi asks:") + " " + msg.question + "\n\n"
+		// The viewport gives up as many lines as the box takes.
+		m.viewport.Height = max(3, m.height-lipgloss.Height(m.viewAskUser()))
 		m.viewport.Width = m.width
 		m = m.refreshViewport()
 		return m, nil
@@ -1593,22 +1595,26 @@ func (m Model) handleAskUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// viewAskUser renders the ask-user question overlay.
+// viewAskUser renders the ask-user question overlay: the whole question, wrapped to the box (#357).
+// Only when it's taller than the screen leaves room for is it cut, and then it says where the rest is.
 func (m Model) viewAskUser() string {
-	q := m.askUserQuestion
-	if len(q) > 200 {
-		q = q[:200] + "..."
+	boxW := min(72, m.width-4)
+	textW := max(10, boxW-2-4-2) // the border, the padding, the indent
+	lines := strings.Split(wrapAtSpaces(m.askUserQuestion, textW), "\n")
+	if room := m.height - 3 - 12; len(lines) > room { // 3 for the chat, 12 for the rest of the box
+		lines = append(lines[:max(1, room-1)], statusStyle.Render("… the whole question is in the chat above"))
 	}
+	q := "  " + strings.Join(lines, "\n  ")
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		headerStyle.Render("Agent Question"),
 		"",
-		"  "+q,
+		q,
 		"",
 		"  "+m.askUserInput.View(),
 		"",
 		statusStyle.Render("  Enter to answer  •  Esc to skip  •  Ctrl+C to quit"),
 	)
-	return helpBoxStyle.Width(min(72, m.width-4)).Render(content)
+	return helpBoxStyle.Width(boxW).Render(content)
 }
 
 // startMessage begins a streaming conversation turn.
