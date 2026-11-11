@@ -110,6 +110,14 @@ func avatarGrid(s avatarState, frame int) [][]byte {
 	case avatarAsking: // up at you
 		dy = -1
 	}
+	if s == avatarTool { // working: the ears twitch outward, one and then the other (#434)
+		switch frame % 4 {
+		case 1:
+			avatarTwitch(g, 2, -1)
+		case 3:
+			avatarTwitch(g, 16, 1)
+		}
+	}
 	blink := s == avatarIdle && frame > 0 && frame%avatarBlinkGap == 0
 	for _, c := range avatarEyeCols {
 		for y := avatarEyeRow; y < avatarEyeRow+2; y++ {
@@ -129,6 +137,15 @@ func avatarGrid(s avatarState, frame int) [][]byte {
 		g[r+1][c], g[r+1][c+1] = 'W', 'W'
 	}
 	return g
+}
+
+// avatarTwitch moves the 2-wide ear at column c (rows 0-1, mascotGrid) one column along dx.
+func avatarTwitch(g [][]byte, c, dx int) {
+	for y := 0; y < 2; y++ {
+		ear := [2]byte{g[y][c], g[y][c+1]}
+		g[y][c], g[y][c+1] = '.', '.'
+		g[y][c+dx], g[y][c+dx+1] = ear[0], ear[1]
+	}
 }
 
 // renderAvatar draws the gopher with half blocks, two pixels to a character - a top one in the
