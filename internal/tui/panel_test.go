@@ -58,3 +58,33 @@ func TestPanelTakesTheHeaderHintsAndStatus(t *testing.T) {
 		t.Errorf("wide view is %d lines on a 50-line terminal", got+1)
 	}
 }
+
+// TestCtrlPPutsThePanelAway: Ctrl+P gives a full-width chat with the bottom rows back, a second
+// brings the panel back, and a new session starts the way the last was left (greatproject #440).
+func TestCtrlPPutsThePanelAway(t *testing.T) {
+	cfg := &runtime.Config{Model: "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-plusIQ-TOOLS-NEO-MAX-MTP-Q6_K", ProviderName: "openai"}
+	start := func() Model {
+		m := NewModel(cfg, runtime.NewConversationLoop(cfg, &recordingClient{}))
+		mm, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 50})
+		return mm.(Model)
+	}
+	press := func(m Model) Model {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		return mm.(Model)
+	}
+	m := press(start())
+	v := ansi.Strip(m.View())
+	if m.viewport.Width != 130 || !strings.Contains(v, "Enter=send") || strings.Contains(v, "Ctrl+O details") {
+		t.Errorf("hidden: viewport %d wide, hint row %v, panel %v", m.viewport.Width, strings.Contains(v, "Enter=send"), strings.Contains(v, "Ctrl+O details"))
+	}
+	if !start().panelHidden {
+		t.Errorf("a new session didn't start with the panel away")
+	}
+	m = press(m)
+	if m.viewport.Width != 130-avatarCols || !strings.Contains(ansi.Strip(m.View()), "Ctrl+O details") {
+		t.Errorf("shown again: viewport %d wide", m.viewport.Width)
+	}
+	if start().panelHidden {
+		t.Errorf("a new session didn't start with the panel back")
+	}
+}
