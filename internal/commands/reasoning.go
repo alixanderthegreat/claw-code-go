@@ -11,7 +11,7 @@ import (
 func RegisterReasoningCommand(r *Registry) {
 	r.Register(Command{
 		Name:        "mode",
-		Description: "Set this session's reasoning mode (e.g. /mode holodeck, /mode iholodeck, /mode default)",
+		Description: "Set this session's reasoning mode (e.g. /mode xhigh, /mode ixhigh, /mode default)",
 		Handler: func(args string, loop interface{}) error {
 			l, ok := loop.(*runtime.ConversationLoop)
 			if !ok {
