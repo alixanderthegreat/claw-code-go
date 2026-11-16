@@ -60,6 +60,7 @@ type ConversationLoop struct {
 	Telemetry    *telemetry.Sender
 	stats        turnStats
 	lastCardHash string // the system prompt's fingerprint last turn (card.go)
+	saveFailed   bool   // the last checkpoint failed, and said so (checkpoint)
 }
 
 // NewConversationLoop creates a new conversation loop with the given client.
@@ -294,6 +295,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	loop.closeDanglingToolUses()
 	loop.startTurnStats(userText)
 	loop.appendUserMessage(userText)
+	loop.checkpoint(events)
 	loop.emitCard()
 
 	var totalInput, totalOutput, totalCached int
@@ -323,6 +325,8 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 		}
 
 		stopReason, inTok, outTok, cachedTok, err := loop.runOneTurnStreaming(ctx, events, &invalidStreak)
+		// Every step goes to disk as it ends: the model's reply and its tool results (#632).
+		loop.checkpoint(events)
 		if err != nil {
 			// A failed request reports no usage, so the last count is from a
 			// smaller, earlier history - often the very request that then
@@ -380,6 +384,7 @@ func (loop *ConversationLoop) SendMessageStreaming(ctx context.Context, userText
 	if loop.Usage != nil {
 		loop.Usage.Add(totalInput, totalOutput, 0, totalCached)
 	}
+	loop.checkpoint(events)
 
 	events <- TurnEvent{
 		Type:         TurnEventUsage,
@@ -1146,6 +1151,24 @@ func (loop *ConversationLoop) ManualCompact(ctx context.Context) (string, error)
 // ListSessions returns all session IDs saved in the configured session directory.
 func (loop *ConversationLoop) ListSessions() ([]string, error) {
 	return ListSessions(loop.Config.SessionDir)
+}
+
+// checkpoint saves the session as the conversation goes (greatproject #632): after the user's
+// message and after every step, so a crash - the terminal gone with the X server, a kill - loses at
+// most the step in progress. Only a loop with a session directory saves. A failed save is said
+// once, in the turn's own output, and the conversation goes on.
+func (loop *ConversationLoop) checkpoint(events chan<- TurnEvent) {
+	if loop.Config == nil || loop.Config.SessionDir == "" || loop.Session == nil {
+		return
+	}
+	err := loop.SaveCurrentSession()
+	if err != nil && !loop.saveFailed {
+		loop.saveFailed = true
+		events <- TurnEvent{Type: TurnEventThinkingDelta, Text: fmt.Sprintf("\n[session not saved: %v - it's still in memory; /session save to try again]\n", err)}
+	}
+	if err == nil {
+		loop.saveFailed = false
+	}
 }
 
 // SaveCurrentSession persists the active session to disk, including usage data.

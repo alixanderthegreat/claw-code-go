@@ -231,7 +231,7 @@ func main() {
 			os.Exit(1)
 		}
 		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 		go func() {
 			<-sigCh
 			fmt.Fprintln(os.Stdout, "\nInterrupted. Saving session...")
@@ -266,9 +266,10 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 	commands.RegisterMCPCommand(registry)
 	_ = registry
 
-	// Save session on SIGTERM (Ctrl+C is handled by Bubble Tea itself).
+	// Save session on SIGTERM, and on SIGHUP: the terminal gone, as when the X server crashes
+	// (greatproject #632). Ctrl+C is handled by Bubble Tea itself.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-sigCh
 		saveSessionSilent(cfg.SessionDir, loop)
@@ -302,9 +303,11 @@ func runTUI(cfg *runtime.Config, loop *runtime.ConversationLoop) {
 // mtime. Prints to stderr on failure, matching the name's original "silent unless something's
 // wrong" contract for errors; the resume hint on success is new, not silent by design.
 func saveSessionSilent(dir string, loop *runtime.ConversationLoop) {
+	// The session first: on SIGHUP the terminal is already gone, and the save is what matters.
+	err := runtime.SaveSession(dir, loop.Session)
 	// Every way out comes through here, so the last turn's telemetry goes too.
 	loop.Telemetry.Flush(2 * time.Second)
-	if err := runtime.SaveSession(dir, loop.Session); err != nil {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save session: %v\n", err)
 		return
 	}

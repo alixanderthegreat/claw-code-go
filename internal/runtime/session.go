@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,8 +56,15 @@ func NewSession() *Session {
 	}
 }
 
-// SaveSession persists a session to disk as JSON.
+// saveMu keeps two saves of a session (a turn's checkpoint and a /session save) from writing at once.
+var saveMu sync.Mutex
+
+// SaveSession persists a session to disk as JSON, atomically (greatproject #632): the JSON goes to
+// a temp file in the same directory, is synced, and is renamed over the session's file. A crash
+// mid-save leaves the old file or the new one whole, never a cut-off one.
 func SaveSession(dir string, s *Session) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
@@ -68,11 +76,48 @@ func SaveSession(dir string, s *Session) error {
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := writeFileAtomic(path, data, 0o644); err != nil {
 		return fmt.Errorf("write session file: %w", err)
 	}
+	return nil
+}
 
+// writeFile is the step that writes the temp file's bytes; a test plants a failure here.
+var writeFile = func(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	return err
+}
+
+// writeFileAtomic writes data to path through a synced temp file and a rename.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			tmp.Close()
+			os.Remove(name)
+		}
+	}()
+	if err := writeFile(tmp, data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	ok = true
 	return nil
 }
 
