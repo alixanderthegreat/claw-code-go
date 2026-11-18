@@ -28,8 +28,10 @@ const maxBashTimeout = 10 * time.Minute
 // BashTool returns the tool definition for the bash tool.
 func BashTool() api.Tool {
 	return api.Tool{
-		Name:        "bash",
-		Description: "Execute a bash command and return the output. Use this for running shell commands, scripts, and system operations. Long jobs (a consult, a build, a race test) need their own timeout: pass `timeout` in seconds, up to 600.",
+		Name: "bash",
+		Description: "Execute a bash command and return the output. Use this for running shell commands, scripts, and system operations. Long jobs (a consult, a build, a race test) need their own timeout: pass `timeout` in seconds, up to 600. " +
+			"Read, search and change files with read_file, grep, glob and file_edit, not cat, sed or echo: they read exactly and edit only what you read. " +
+			"Quote paths that have spaces. Never run git reset --hard, push --force, checkout --, clean -f or branch -D unless you're asked to.",
 		InputSchema: api.InputSchema{
 			Type: "object",
 			Properties: map[string]api.Property{
