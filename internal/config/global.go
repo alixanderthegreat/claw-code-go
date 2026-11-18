@@ -59,6 +59,19 @@ type GlobalConfig struct {
 	// `go test` as `rtk go test` - so the model reads a summary of the output, not all of it
 	// (greatproject #648). Needs rtk on PATH. Off unless set.
 	CompressOutput bool `json:"compress_output"`
+	// MCPServers are Gordi's own MCP servers (greatproject #649), here rather than in
+	// ~/.claude/settings.json, which is Claude Code's file and holds its servers in another shape.
+	MCPServers []MCPServer `json:"mcp_servers"`
+}
+
+// MCPServer is one MCP server Gordi starts (stdio: command and args) or reaches (sse: url).
+type MCPServer struct {
+	Name      string            `json:"name"`
+	Transport string            `json:"transport"` // "stdio" or "sse"
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
 }
 
 // GlobalConfigPath returns the path to ~/.config/claw-code-go/config.json.

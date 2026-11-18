@@ -8,8 +8,15 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
+	"time"
 )
+
+// StderrLog, when set, takes what stdio MCP servers write to stderr, a line at a time. Unset, it
+// goes to the standard logger - which is the terminal, where a server's log lines would land in
+// the middle of the TUI's screen (Serena's language server warns on every lookup, #649).
+var StderrLog io.Writer
 
 // StdioTransport communicates with an MCP server over stdin/stdout.
 // It spawns the server as a child process and uses newline-delimited JSON.
@@ -53,10 +60,14 @@ func NewStdioTransport(command string, args []string, env []string) (*StdioTrans
 		stdout: bufio.NewScanner(stdoutPipe),
 	}
 
-	// Drain stderr to a debug logger so it doesn't block the process.
+	// Drain stderr so it doesn't block the process: to StderrLog when set, else the debug logger.
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
+			if w := StderrLog; w != nil {
+				fmt.Fprintf(w, "%s [%s] %s\n", time.Now().Format(time.RFC3339), filepath.Base(command), scanner.Text())
+				continue
+			}
 			log.Printf("[MCP stderr %s] %s", command, scanner.Text())
 		}
 	}()
