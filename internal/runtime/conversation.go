@@ -757,7 +757,8 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			}
 
 			toolStart := time.Now()
-			result := loop.ExecuteTool(tb.name, inputMap)
+			runInput, compressed := loop.compressInput(tb.name, inputMap)
+			result := loop.ExecuteTool(tb.name, runInput)
 			result.ToolUseID = tb.id
 			toolResults = append(toolResults, result)
 
@@ -765,7 +766,7 @@ func (loop *ConversationLoop) runOneTurnStreaming(ctx context.Context, events ch
 			if len(result.Content) > 0 {
 				resultText = result.Content[0].Text
 			}
-			loop.emitTool(tb.name, time.Since(toolStart).Milliseconds(), result.IsError, strings.Contains(resultText, "[truncated:"), asked, "")
+			loop.emitToolRan(tb.name, time.Since(toolStart).Milliseconds(), result.IsError, strings.Contains(resultText, "[truncated:"), asked, len(resultText), compressed)
 
 			select {
 			case events <- TurnEvent{Type: TurnEventToolDone, ToolName: tb.name, ToolResult: resultText, ToolFailed: result.IsError}:

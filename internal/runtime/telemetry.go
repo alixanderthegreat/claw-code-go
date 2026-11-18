@@ -14,7 +14,8 @@ import (
 //	gordi_run   one model request: tokens (prompt, cached, output, thinking), MTP drafts,
 //	            time to first output, prefill speed, duration, stop and finish reasons, kronk's
 //	            failure if any
-//	gordi_tool  one tool call: duration, failed, output trimmed, asked you, denied
+//	gordi_tool  one tool call: duration, failed, output trimmed, asked you, denied; for one that
+//	            ran, the bytes the model read back and whether rtk summarized them
 //	gordi_turn  one exchange: requests, tools, and its time split into model, tools, and you
 //	gordi_start the build: the commit it was installed from (main.go)
 //	gordi_image one image given to the model: from your message or read_file, its size and type
@@ -93,14 +94,27 @@ func (loop *ConversationLoop) emitRun(start, firstOut time.Time, u api.UsageDelt
 	})
 }
 
-// emitTool records a call that ran (denied == "") or was refused: by a rule, or by you.
+// emitTool records a call that was refused - by a rule, or by you - or failed before it ran.
 func (loop *ConversationLoop) emitTool(name string, ms int64, failed, trimmed, asked bool, denied string) {
+	loop.sendTool(name, ms, failed, trimmed, asked, denied, nil)
+}
+
+// emitToolRan records a call that ran, with the size of what the model read back and whether rtk
+// summarized it (#648): with compress_output on and off, these say what rtk saved.
+func (loop *ConversationLoop) emitToolRan(name string, ms int64, failed, trimmed, asked bool, outputBytes int, compressed bool) {
+	loop.sendTool(name, ms, failed, trimmed, asked, "", map[string]any{
+		"output_bytes": outputBytes,
+		"compressed":   compressed,
+	})
+}
+
+func (loop *ConversationLoop) sendTool(name string, ms int64, failed, trimmed, asked bool, denied string, extra map[string]any) {
 	loop.stats.tools++
 	loop.stats.toolMs += ms
 	if failed {
 		loop.stats.failed++
 	}
-	loop.Telemetry.Send("gordi_tool", map[string]any{
+	fields := map[string]any{
 		"session":   loop.Session.ID,
 		"tool":      name,
 		"perm_mode": loop.PermMode(),
@@ -109,7 +123,11 @@ func (loop *ConversationLoop) emitTool(name string, ms int64, failed, trimmed, a
 		"trimmed":   trimmed,
 		"asked":     asked,
 		"denied":    denied,
-	})
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	loop.Telemetry.Send("gordi_tool", fields)
 }
 
 // waitedOnYou adds time the turn spent on a permission box or an ask_user question.

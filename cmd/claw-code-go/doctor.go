@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -84,6 +85,8 @@ func doctor() []check {
 		out = append(out, check{"voice", "ok", fmt.Sprintf("%s: records with %s, plays with %s, speaks as %s", cfg.VoiceMode, rec, player, speaks)})
 	}
 
+	out = append(out, compressCheck(cfg.CompressOutput))
+
 	wd, _ := os.Getwd()
 	files := ctxpkg.StableSections(wd).InstructionFiles
 	if len(files) == 0 {
@@ -95,6 +98,25 @@ func doctor() []check {
 	out = append(out, toolsCheck(ctxpkg.Tools()))
 	out = append(out, handoffCheck(handoff.Dir(), wd))
 	return out
+}
+
+// compressCheck says whether the model's commands go through rtk (#648). On without rtk on PATH
+// isn't broken for the model - its commands run as given - but it isn't what was asked for.
+func compressCheck(on bool) check {
+	if !on {
+		return check{"compress", "off", "compress_output isn't set"}
+	}
+	path, err := exec.LookPath("rtk")
+	if err != nil {
+		return check{"compress", "FAIL", "compress_output is on, but rtk isn't on PATH: commands run as given"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	version, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return check{"compress", "FAIL", fmt.Sprintf("%s doesn't run: %v", path, err)}
+	}
+	return check{"compress", "ok", fmt.Sprintf("%s (%s)", strings.TrimSpace(string(version)), path)}
 }
 
 // handoffCheck says whether /handoff has anything here. No condenser on this machine is off, not

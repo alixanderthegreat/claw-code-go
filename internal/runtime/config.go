@@ -86,6 +86,8 @@ type Config struct {
 	SuggestNext bool
 	// SuggestModel: the model the suggestion asks; empty is Model.
 	SuggestModel string
+	// CompressOutput: the model's bash commands go through rtk when it has a version (#648).
+	CompressOutput bool
 }
 
 // LoadConfig reads configuration from layered settings files, the global
@@ -129,6 +131,7 @@ func LoadConfig() *Config {
 		cfg.SpeechVoice = gc.SpeechVoice
 		cfg.SuggestNext = gc.SuggestNext
 		cfg.SuggestModel = gc.SuggestModel
+		cfg.CompressOutput = gc.CompressOutput
 		cfg.Theme = gc.Theme
 	}
 
