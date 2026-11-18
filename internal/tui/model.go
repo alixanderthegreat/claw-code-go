@@ -539,6 +539,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.refreshViewport()
 		return m, nil
 
+	case mcpDoneMsg:
+		return m.mcpDone(msg), nil
+
 	case shellDoneMsg:
 		m = m.clearActivity()
 		m.loop.NoteShellCommand(msg.command, msg.output, msg.err)
@@ -982,6 +985,9 @@ func (m Model) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 
 	case "/voice":
 		return m.handleVoiceCommand(parts)
+
+	case "/mcp":
+		return m.handleMCPCommand(parts)
 
 	case "/exit", "/quit":
 		return m, tea.Quit
@@ -1958,6 +1964,7 @@ func (m Model) viewHelp() string {
 		"  "+userLabelStyle.Render("/theme")+" dark|light|auto          Switch TUI color theme (auto matches the terminal)",
 		"  "+userLabelStyle.Render("/status")+"                         Show model/provider/session info",
 		"  "+userLabelStyle.Render("/card")+"                           Show what the model is sent: each part's size, the system prompt, the summary",
+		"  "+userLabelStyle.Render("/mcp")+" [add|remove|connect|disconnect]  MCP servers: list, add one to the config (NAME COMMAND [ARGS...]), drop one",
 		"  "+userLabelStyle.Render("/cost")+"                           Show token usage this session",
 		"",
 		statusStyle.Render("Session"),
