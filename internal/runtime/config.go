@@ -110,7 +110,11 @@ func LoadConfig() *Config {
 	}
 
 	// Apply global config as the base (~/.config/claw-code-go/config.json).
+	var ownMCP []MCPServerConfig
 	if gc, err := config.LoadGlobal(); err == nil {
+		for _, s := range gc.MCPServers {
+			ownMCP = append(ownMCP, MCPServerConfig(s))
+		}
 		if gc.Model != "" {
 			cfg.Model = gc.Model
 		}
@@ -179,10 +183,30 @@ func LoadConfig() *Config {
 	// Detect the active provider from env vars and global config.
 	cfg.ProviderName = detectProvider(cfg.BaseURL)
 
-	// Load MCP server configs.
-	cfg.MCPServers = loadMCPServers(homeDir)
+	// Load MCP server configs: CLAUDE_MCP_SERVERS alone when set, else Gordi's own (config.json)
+	// and then ~/.claude/settings.json's.
+	if os.Getenv("CLAUDE_MCP_SERVERS") != "" {
+		cfg.MCPServers = loadMCPServers(homeDir)
+	} else {
+		cfg.MCPServers = mergeMCPServers(ownMCP, loadMCPServers(homeDir))
+	}
 
 	return cfg
+}
+
+// mergeMCPServers is own, then each of others whose name own doesn't already use.
+func mergeMCPServers(own, others []MCPServerConfig) []MCPServerConfig {
+	out := append([]MCPServerConfig(nil), own...)
+	taken := make(map[string]bool, len(own))
+	for _, s := range own {
+		taken[s.Name] = true
+	}
+	for _, s := range others {
+		if !taken[s.Name] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // loadMCPServers reads MCP server configurations from the settings file and

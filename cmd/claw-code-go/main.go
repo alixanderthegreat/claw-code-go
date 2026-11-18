@@ -5,6 +5,7 @@ import (
 	"claw-code-go/internal/commands"
 	"claw-code-go/internal/compat"
 	"claw-code-go/internal/config"
+	"claw-code-go/internal/mcp"
 	"claw-code-go/internal/permissions"
 	"claw-code-go/internal/runtime"
 	"claw-code-go/internal/serve"
@@ -206,7 +207,13 @@ func main() {
 	}
 	loop.PermManager = permissions.NewManager(permMode, ruleset)
 
-	// Connect to MCP servers defined in config (non-fatal errors printed inside).
+	// Connect to MCP servers defined in config (non-fatal errors printed inside). What they write
+	// to stderr goes to a file beside the sessions, not onto the TUI's screen.
+	if len(cfg.MCPServers) > 0 {
+		if f, err := openMCPLog(filepath.Join(filepath.Dir(cfg.SessionDir), "mcp.log")); err == nil {
+			mcp.StderrLog = f
+		}
+	}
 	loop.InitMCPFromConfig(context.Background())
 
 	if *sessionFlag != "" {
