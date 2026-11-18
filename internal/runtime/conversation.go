@@ -1268,10 +1268,14 @@ func (loop *ConversationLoop) InitMCPFromConfig(ctx context.Context) {
 	}
 }
 
-// MCPConnect connects to a named MCP server defined in config.
+// MCPConnect connects to a named MCP server defined in config. One already connected is refused:
+// a second connection would start a second server and offer its tools twice.
 func (loop *ConversationLoop) MCPConnect(ctx context.Context, name string) error {
 	if loop.MCPRegistry == nil {
 		loop.MCPRegistry = mcp.NewRegistry()
+	}
+	if loop.mcpConnected(name) {
+		return fmt.Errorf("%q is already connected", name)
 	}
 	for _, srv := range loop.Config.MCPServers {
 		if srv.Name != name {

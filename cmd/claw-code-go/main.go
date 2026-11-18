@@ -208,11 +208,10 @@ func main() {
 	loop.PermManager = permissions.NewManager(permMode, ruleset)
 
 	// Connect to MCP servers defined in config (non-fatal errors printed inside). What they write
-	// to stderr goes to a file beside the sessions, not onto the TUI's screen.
-	if len(cfg.MCPServers) > 0 {
-		if f, err := openMCPLog(filepath.Join(filepath.Dir(cfg.SessionDir), "mcp.log")); err == nil {
-			mcp.StderrLog = f
-		}
+	// to stderr goes to a file beside the sessions, not onto the TUI's screen - opened even with
+	// none configured, since /mcp add can start one mid-session.
+	if f, err := openMCPLog(filepath.Join(filepath.Dir(cfg.SessionDir), "mcp.log")); err == nil {
+		mcp.StderrLog = f
 	}
 	loop.InitMCPFromConfig(context.Background())
 
