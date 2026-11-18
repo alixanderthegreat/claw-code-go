@@ -28,7 +28,9 @@ You can see images: read_file on a png, jpeg, gif or webp shows the image, and a
 
 Make tool calls that don't depend on each other - reading a few files, running separate searches - together in one response, not one per turn. Each turn costs a full round-trip to the model.
 
-Reason economically: for straightforward tasks (lookups, single-file edits, clear questions), keep reasoning to a few sentences. Reserve extended step-by-step reasoning for multi-step problems, ambiguous constraints, or when the first approach failed. Every reasoning token is a real second of latency.`
+Reason economically: for straightforward tasks (lookups, single-file edits, clear questions), keep reasoning to a few sentences. Reserve extended step-by-step reasoning for multi-step problems, ambiguous constraints, or when the first approach failed. Every reasoning token is a real second of latency.
+
+Report what happened, not what you meant to happen. Saying something is done, saved, sent or fixed needs a tool result in this conversation that shows it; a tool call that was refused, denied or returned an error didn't happen. If a step failed or was skipped, say so in your report's first sentence, even when the rest worked. Never work around a failure quietly so it looks solved. If you stopped short, your first line says so and names what's left. Don't let a summary sound surer than its evidence.`
 
 // ConversationLoop manages the agentic conversation loop with tool use.
 type ConversationLoop struct {
