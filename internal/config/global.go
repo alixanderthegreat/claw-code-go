@@ -55,6 +55,10 @@ type GlobalConfig struct {
 	// SuggestModel is the model the suggestion asks, when it isn't the main one: a small, fast
 	// one is enough for one line from a short context. Empty is the main model.
 	SuggestModel string `json:"suggest_model"`
+	// CompressOutput runs the model's bash commands through rtk when it has a version of them -
+	// `go test` as `rtk go test` - so the model reads a summary of the output, not all of it
+	// (greatproject #648). Needs rtk on PATH. Off unless set.
+	CompressOutput bool `json:"compress_output"`
 }
 
 // GlobalConfigPath returns the path to ~/.config/claw-code-go/config.json.

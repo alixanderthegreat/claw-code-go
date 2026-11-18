@@ -90,7 +90,8 @@ func ExecuteBash(input map[string]any) (string, error) {
 	// Nothing may ask for input: the TUI owns the terminal. A command that prompts (an ssh host
 	// key or password, sudo, a git login) took the terminal over and hung - so it runs detached
 	// from it, with git's and ssh's prompts off, and a prompt fails at once with a clear error.
-	cmd.Env = noPromptEnv(os.Environ())
+	// A command rtk rewrote (rtk.go) runs with rtk's copies and telemetry off.
+	cmd.Env = rtkEnv(noPromptEnv(os.Environ()))
 	detach(cmd)
 	// On timeout, the whole group goes, and Run stops waiting for pipes a child still holds - the
 	// timeout used to kill bash alone while an ssh it started kept the output open forever.
